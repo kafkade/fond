@@ -103,11 +103,13 @@ fn insert_recipe_in_tx(
     recipe: &fond_domain::Recipe,
     content_hash: &str,
 ) -> Result<i64, StoreError> {
+    let total_time_minutes = compute_total_time_minutes_for_reindex(recipe);
+
     tx.execute(
         "INSERT INTO recipes (file_path, slug, title, source, source_url,
          description, recipe_yield, prep_time, cook_time, total_time,
-         servings, content_hash, raw_source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         servings, content_hash, raw_source, total_time_minutes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             file_path,
             recipe.slug,
@@ -122,6 +124,7 @@ fn insert_recipe_in_tx(
             recipe.servings.as_deref().unwrap_or(""),
             content_hash,
             recipe.raw_source.as_deref().unwrap_or(""),
+            total_time_minutes,
         ],
     )?;
     let recipe_id = tx.last_insert_rowid();
@@ -204,4 +207,30 @@ fn content_hash(content: &str) -> String {
     let mut h = DefaultHasher::new();
     content.hash(&mut h);
     format!("{:016x}", h.finish())
+}
+
+/// Compute total_time_minutes from the recipe's time fields.
+fn compute_total_time_minutes_for_reindex(recipe: &fond_domain::Recipe) -> Option<u32> {
+    if let Some(ref total) = recipe.total_time
+        && let Some(mins) = fond_domain::parse_time_minutes(total)
+    {
+        return Some(mins);
+    }
+
+    let prep = recipe
+        .prep_time
+        .as_deref()
+        .and_then(fond_domain::parse_time_minutes)
+        .unwrap_or(0);
+    let cook = recipe
+        .cook_time
+        .as_deref()
+        .and_then(fond_domain::parse_time_minutes)
+        .unwrap_or(0);
+
+    if prep > 0 || cook > 0 {
+        Some(prep + cook)
+    } else {
+        None
+    }
 }

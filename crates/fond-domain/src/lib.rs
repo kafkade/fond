@@ -6,12 +6,14 @@
 
 mod emitter;
 mod error;
+pub mod filter;
 mod parser;
 pub mod recipe;
 mod slug;
 
 pub use emitter::*;
 pub use error::*;
+pub use filter::*;
 pub use parser::*;
 pub use recipe::*;
 pub use slug::*;
