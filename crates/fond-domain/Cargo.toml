@@ -1,0 +1,14 @@
+[package]
+name = "fond-domain"
+description = "Domain types, traits, and errors for fond recipe manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true

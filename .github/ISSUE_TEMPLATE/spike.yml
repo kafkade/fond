@@ -1,0 +1,65 @@
+name: Spike / Investigation
+description: Propose a technical spike or proof-of-concept
+title: "[Spike]: "
+labels: ["spike", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Spikes are time-boxed investigations to reduce technical risk before committing
+        to an implementation. See ROADMAP.md §14.1 for the initial spike backlog.
+  - type: textarea
+    id: question
+    attributes:
+      label: What question does this spike answer?
+      description: A clear yes/no or go/no-go question this investigation will resolve
+      placeholder: "Can cooklang-rs parse and round-trip real-world .cook files losslessly?"
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Approach
+      description: How will you investigate? What will you build or test?
+    validations:
+      required: true
+  - type: textarea
+    id: go-nogo
+    attributes:
+      label: Go / No-Go criteria
+      description: What outcome means "go" (proceed) vs "no-go" (change approach)?
+      placeholder: |
+        Go: Round-trip fidelity >= 95% across test corpus
+        No-Go: Write custom parser (multi-week effort)
+    validations:
+      required: true
+  - type: dropdown
+    id: timebox
+    attributes:
+      label: Time box
+      description: Maximum time to spend before reporting findings
+      options:
+        - "1 week"
+        - "2 weeks"
+        - "3 weeks"
+        - "Other (describe in context)"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Crate / Component
+      description: Which part of fond is this investigating?
+      options:
+        - Core library (fond-core)
+        - Domain model (fond-domain)
+        - Database / search (fond-store)
+        - Import pipeline (fond-import)
+        - Web scraping (fond-scrape)
+        - Timeline engine (fond-timeline)
+        - Other
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, prior art, related ADRs, or other relevant information

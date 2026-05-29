@@ -1,0 +1,18 @@
+[package]
+name = "fond"
+description = "A private, local-first personal cooking & recipe manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fond"
+path = "src/main.rs"
+
+[dependencies]
+fond-core = { path = "../fond-core", version = "0.1.0" }
+fond-store = { path = "../fond-store", version = "0.1.0" }
+clap = { version = "4", features = ["derive", "env"] }
+anyhow.workspace = true
