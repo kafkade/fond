@@ -450,6 +450,7 @@ name = "fond-store"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cooklang",
  "directories",
  "fond-core",
  "rusqlite",

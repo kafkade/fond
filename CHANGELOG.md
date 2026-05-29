@@ -24,3 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spike report documenting Paprika format analysis and field mapping (`docs/spikes/002-paprika-format.md`)
 - schema.org/JSON-LD recipe extraction proof-of-concept with `scraper` (spike #3 — GO)
 - Spike report documenting JSON-LD patterns and field mapping (`docs/spikes/003-schema-org-extraction.md`)
+- SQLite/FTS5 derive-from-files and atomic reindex proof-of-concept (spike #4 — GO)
+- Full-text search across recipe titles, ingredients, steps, and tags with phrase and prefix queries
+- Spike report documenting hybrid storage validation and schema design (`docs/spikes/004-sqlite-fts5.md`)
