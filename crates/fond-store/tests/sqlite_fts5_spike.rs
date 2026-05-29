@@ -200,17 +200,17 @@ fn parse_cook_file(content: &str, file_stem: &str) -> Option<IndexedRecipe> {
                             cooklang::Item::Text { value } => value.clone(),
                             cooklang::Item::Ingredient { index } => recipe
                                 .ingredients
-                                .get(*index as usize)
+                                .get(*index)
                                 .map(|i| i.name.clone())
                                 .unwrap_or_default(),
                             cooklang::Item::Cookware { index } => recipe
                                 .cookware
-                                .get(*index as usize)
+                                .get(*index)
                                 .map(|c| c.name.clone())
                                 .unwrap_or_default(),
                             cooklang::Item::Timer { index } => recipe
                                 .timers
-                                .get(*index as usize)
+                                .get(*index)
                                 .and_then(|t| t.name.clone())
                                 .unwrap_or_default(),
                             _ => String::new(),
@@ -997,7 +997,7 @@ fn reindex_skips_invalid_files() {
     let recipes_dir = tmp.path().join("recipes");
     setup_test_recipes(&recipes_dir);
 
-    fs::write(recipes_dir.join("broken.cook"), &[0xFF, 0xFE, 0x00, 0x01]).unwrap();
+    fs::write(recipes_dir.join("broken.cook"), [0xFF, 0xFE, 0x00, 0x01]).unwrap();
 
     let db_path = tmp.path().join("fond.db");
     let conn = open_db(&db_path);

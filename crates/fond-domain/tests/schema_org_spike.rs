@@ -103,10 +103,10 @@ fn extract_recipes_from_value(value: &serde_json::Value, recipes: &mut Vec<Schem
             }
 
             // Check @type
-            if is_recipe_type(map.get("@type")) {
-                if let Ok(recipe) = serde_json::from_value::<SchemaRecipe>(value.clone()) {
-                    recipes.push(recipe);
-                }
+            if is_recipe_type(map.get("@type"))
+                && let Ok(recipe) = serde_json::from_value::<SchemaRecipe>(value.clone())
+            {
+                recipes.push(recipe);
             }
         }
         serde_json::Value::Array(items) => {
@@ -185,7 +185,7 @@ fn extract_author(author: &serde_json::Value) -> Option<String> {
         serde_json::Value::Object(map) => {
             map.get("name").and_then(|n| n.as_str()).map(String::from)
         }
-        serde_json::Value::Array(arr) => arr.first().and_then(|a| extract_author(a)),
+        serde_json::Value::Array(arr) => arr.first().and_then(extract_author),
         _ => None,
     }
 }
@@ -896,15 +896,15 @@ fn field_mapping_demonstration() {
     if let Some(ref desc) = recipe.description {
         cooklang_meta.insert("description", desc.clone());
     }
-    if let Some(ref author) = recipe.author {
-        if let Some(name) = extract_author(author) {
-            cooklang_meta.insert("source", name);
-        }
+    if let Some(ref author) = recipe.author
+        && let Some(name) = extract_author(author)
+    {
+        cooklang_meta.insert("source", name);
     }
-    if let Some(ref y) = recipe.recipe_yield {
-        if let Some(s) = y.as_str() {
-            cooklang_meta.insert("servings", s.to_string());
-        }
+    if let Some(ref y) = recipe.recipe_yield
+        && let Some(s) = y.as_str()
+    {
+        cooklang_meta.insert("servings", s.to_string());
     }
     if let Some(ref pt) = recipe.prep_time {
         cooklang_meta.insert("prep time", pt.clone());
@@ -912,15 +912,15 @@ fn field_mapping_demonstration() {
     if let Some(ref ct) = recipe.cook_time {
         cooklang_meta.insert("cook time", ct.clone());
     }
-    if let Some(ref cuisine) = recipe.recipe_cuisine {
-        if let Some(s) = cuisine.as_str() {
-            cooklang_meta.insert("cuisine", s.to_string());
-        }
+    if let Some(ref cuisine) = recipe.recipe_cuisine
+        && let Some(s) = cuisine.as_str()
+    {
+        cooklang_meta.insert("cuisine", s.to_string());
     }
-    if let Some(ref cat) = recipe.recipe_category {
-        if let Some(s) = cat.as_str() {
-            cooklang_meta.insert("category", s.to_string());
-        }
+    if let Some(ref cat) = recipe.recipe_category
+        && let Some(s) = cat.as_str()
+    {
+        cooklang_meta.insert("category", s.to_string());
     }
 
     // Verify mapping
@@ -977,7 +977,7 @@ fn extraction_quality_across_blogs() {
             let steps = recipe
                 .recipe_instructions
                 .as_ref()
-                .map(|i| extract_steps(i))
+                .map(extract_steps)
                 .unwrap_or_default();
 
             results.push(BlogResult {
