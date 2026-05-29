@@ -25,3 +25,5 @@ clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 directories = "6"
 cooklang = "0.18"
+flate2 = "1"
+zip = { version = "4", default-features = false, features = ["deflate"] }
