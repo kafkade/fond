@@ -1,10 +1,11 @@
 use rusqlite::params;
+use serde::Serialize;
 
 use crate::db::FondDb;
 use crate::error::StoreError;
 
 /// Summary of a recipe for list views.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RecipeSummary {
     pub id: i64,
     pub slug: String,
@@ -14,7 +15,7 @@ pub struct RecipeSummary {
 }
 
 /// A full recipe record from the database (indexed projection).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RecipeRecord {
     pub id: i64,
     pub file_path: String,
@@ -35,7 +36,7 @@ pub struct RecipeRecord {
 }
 
 /// FTS5 search result.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SearchResult {
     pub recipe_id: i64,
     pub title: String,
@@ -339,6 +340,35 @@ impl<'a> RecipeRepository<'a> {
         let conn = self.db.conn();
         let count: i64 = conn.query_row("SELECT count(*) FROM recipes", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    /// Delete a single recipe by slug.
+    ///
+    /// Returns the file_path of the deleted recipe (for callers that
+    /// need to remove the file from disk), or `None` if the slug was
+    /// not found.
+    pub fn delete_recipe_by_slug(&self, slug: &str) -> Result<Option<String>, StoreError> {
+        let conn = self.db.conn();
+
+        // Look up the recipe first to get id and file_path
+        let row: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT id, file_path FROM recipes WHERE slug = ?1",
+                params![slug],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        let Some((id, file_path)) = row else {
+            return Ok(None);
+        };
+
+        // Delete FTS entry (not covered by CASCADE)
+        conn.execute("DELETE FROM recipe_fts WHERE rowid = ?1", params![id])?;
+        // Delete recipe (CASCADE handles child tables)
+        conn.execute("DELETE FROM recipes WHERE id = ?1", params![id])?;
+
+        Ok(Some(file_path))
     }
 }
 

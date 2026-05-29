@@ -7,7 +7,7 @@ use crate::db::FondDb;
 use crate::error::StoreError;
 
 /// Result of a reindex operation.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct ReindexReport {
     /// Number of recipes successfully indexed.
     pub indexed: usize,
