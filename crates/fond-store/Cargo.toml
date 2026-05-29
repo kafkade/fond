@@ -19,3 +19,4 @@ directories.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+cooklang.workspace = true
