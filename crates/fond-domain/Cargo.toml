@@ -12,3 +12,7 @@ thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 serde.workspace = true
+cooklang.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
