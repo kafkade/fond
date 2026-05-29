@@ -28,11 +28,12 @@ Cargo workspace with 7 crates:
 - `fond-timeline/` — Cooking timeline: DAG model, backward scheduling, active/passive time.
 
 Later additions (not yet scaffolded):
+
 - `fond-export/` — Export implementations (JSON, Paprika, plain copy)
 
 ### Storage Model (ADR-002)
 
-```
+```text
 ~/fond/
   recipes/            ← .cook files (SOURCE OF TRUTH)
     chicken-adobo.cook

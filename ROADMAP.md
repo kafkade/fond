@@ -169,7 +169,7 @@ Seven personas, each mapped to the phase that first delivers them real value. Th
 
 fond is a **layered local-first application** with a pure-Rust core and swappable front-ends.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────┐
 │  Front-ends (later phases)                                 │
 │  CLI (fond)  │  TUI cook-mode  │  Web (Axum+HTMX)  │ Apple │
@@ -375,6 +375,7 @@ The CRUD is 🟢. The **ontology, density data, timeline DAG, and non-linear sca
 Grouped by the job they serve, tagged with release tier.
 
 ### 4.1 Recipe management (MVP)
+
 - `fond add` / `fond edit` / `fond view` / `fond rm` — CRUD over `.cook` files. 🟢
 - `fond list` / `fond search <query>` — FTS5-backed instant search. 🟢
 - `fond tag` — categories, cuisines, free tags. 🟢
@@ -382,15 +383,18 @@ Grouped by the job they serve, tagged with release tier.
 - Notes & ratings per recipe ("cooking memories," A20). 🟢
 
 ### 4.2 Import / export (MVP→Beta)
+
 - Paprika import (MVP), schema.org URL import (MVP), NYT/Cook's Illustrated (Beta). 🟡🔴
 - Export to JSON / Paprika / plain copy (MVP). 🟢
 
 ### 4.3 Cooking companion (Phase 2 / Beta)
+
 - TUI **cook mode**: step-by-step with live timers. 🟡
 - **Timeline**: backward-scheduled plan from a target eat-time. 🔴
 - Recipe **scaling** (linear + warnings). 🔴
 
 ### 4.4 Planning & household (Phase 3 / Beta→1.0)
+
 - **Meal planning** (assign recipes to days). 🟡
 - **Pantry** (opt-in, presence-first). 🟡
 - **Grocery lists** (pantry-aware, aisle-grouped, consolidated). 🟡
@@ -398,10 +402,12 @@ Grouped by the job they serve, tagged with release tier.
 - **Scoreboard** (what you've cooked, frequency, ratings over time). 🟢
 
 ### 4.5 Nutrition (Phase 3, informational)
+
 - Per-recipe estimates from USDA FoodData Central (offline subset, A10). 🟡
 - **Non-goal:** calorie/diet *tracking*.
 
 ### 4.6 Interfaces (Phase 4+)
+
 - Web UI (`fond serve`, Axum + HTMX). 🟡
 - Native Apple apps (iOS/iPad/macOS/Watch). 🔴
 
@@ -455,25 +461,30 @@ The unifying principle: most of these **fall out of data we already model** (pan
 All AI features are **Research-tier (Phase 6)** and explicitly gated behind a stable data model and offline-first guarantees. None is in the MVP. Each must degrade gracefully to a non-AI path.
 
 ### 6.1 Inventory-based recipe suggestions 🟡
+
 - **Idea:** "You have chicken, lemon, and rice — here are 6 recipes you can make now."
 - **Approach:** This is *not* AI to start — it's pantry-coverage ranking (§3A.4) sorted by % coverage and time. A genuine win with **zero ML**. AI only later improves ranking by taste history.
 - **Stance:** Ship the deterministic version in Beta; defer any ML.
 
 ### 6.2 Ingredient substitution engine 🔴
+
 - **Idea:** "Out of buttermilk? Use milk + lemon juice."
 - **Approach:** A curated substitution dataset (context-aware: baking vs. sautéing) from the ingredient ontology (§3A.1), *not* a generative model. Rankings, never silent swaps.
 - **Risk:** Wrong substitution in baking ruins a dish — must be advisory, sourced, and reversible.
 
 ### 6.3 Intelligent recipe scaling 🔴
+
 - **Idea:** Scale non-linearly (leavening, salt, time) automatically.
 - **Approach:** Rule-based using ingredient classification (§3A.6), not ML. AI could *suggest* adjustments but the engine stays deterministic and explainable.
 - **Stance:** Linear + warnings in Phase 2; rule-based non-linear later; AI never owns correctness.
 
 ### 6.4 Automatic nutritional calculation 🟡
+
 - **Idea:** Estimate per-serving nutrition.
 - **Approach:** Deterministic sum over USDA FoodData Central (§9, A10) — *not* AI. Informational only; explicit non-goal to be a diet tracker.
 
 ### 6.5 OCR for handwritten / photo recipes ⛔→🔴
+
 - **Idea:** Snap grandma's index card → editable recipe.
 - **Approach:** OCR (Tesseract or a vision model) → text → Cooklang draft → review queue. Handwriting accuracy is genuinely hard (⛔ today for cursive); printed cards are tractable (🔴).
 - **Stance:** Research-tier; always routes through the import review queue (ADR-010); never auto-saves.
@@ -487,30 +498,35 @@ All AI features are **Research-tier (Phase 6)** and explicitly gated behind a st
 Deep study of prior art using an **adopt / adapt / reject** framework — to learn, not to clone.
 
 ### 7.1 Paprika Recipe Manager
+
 - **Adopt:** Excellent web clipper UX; clean recipe rendering; cross-device convenience expectation.
 - **Adapt:** Its category/rating model → our tags + per-user ratings. Its sync → our (later) user-controlled sync.
 - **Reject:** Closed binary format and paid proprietary sync (the lock-in fond exists to escape). Weak cooking-timeline support.
 - **Takeaway:** Paprika is the incumbent to *migrate away from* — hence Paprika import is the MVP centerpiece (§3.3).
 
 ### 7.2 Cooklang ecosystem
+
 - **Adopt:** The `.cook` format itself as our canonical store (principle #4); the CLI ethos; the open spec.
 - **Adapt:** Extend Cooklang metadata for our richer model (ratings, pantry links) *without breaking round-trip*.
 - **Reject:** Nothing — we are deliberately ecosystem-compatible. fond aims to be a *premier* Cooklang app, not a fork.
 - **Takeaway:** Compatibility is a feature; contribute upstream where we extend (ADR-003).
 
 ### 7.3 NYT Cooking
+
 - **Adopt:** Editorial quality bar for recipe presentation; the "cook mode" concept.
 - **Adapt:** Their guided-cooking UX → our TUI/web cook mode (§6.3).
 - **Reject:** Walled garden, zero data ownership, subscription lock-in.
 - **Takeaway:** A key import source (Beta, authenticated, user's own subscription) — never a redistribution source (§3.5).
 
 ### 7.4 Mealie / Tandoor (self-hosted)
+
 - **Adopt:** Self-hosting + family-sharing validation; meal-planning and shopping-list patterns; their schema.org import.
 - **Adapt:** Their server model → our optional `fond serve` (Phase 4) rather than server-first.
 - **Reject:** Server-first/DB-only architecture (we are files-first, local-first, CLI-first); Docker-as-prerequisite friction.
 - **Takeaway:** Proof that family-shared self-hosted cooking apps have a real audience — and that a *files-first, CLI-first* alternative is an open niche.
 
 ### 7.5 Synthesis
+
 No existing app is simultaneously files-first-owned, a genuine cooking aid, family-shared, and CLI-first/scriptable. fond's design borrows the best UX (Paprika clipper, NYT cook mode, Mealie planning) atop an ownership model (Cooklang files) none of the polished apps offer. Detailed positioning is in §10.
 
 ---
@@ -551,7 +567,7 @@ This satisfies principle #3: multi-user is in the schema from day one, even thou
 
 ### 8.3 Storage layering (the hybrid)
 
-```
+```text
 ~/fond/
   recipes/            ← .cook files (SOURCE OF TRUTH)
     chicken-adobo.cook
@@ -568,7 +584,7 @@ This satisfies principle #3: multi-user is in the schema from day one, even thou
 
 ### 8.4 ERD (text)
 
-```
+```text
 User 1───* Note *───1 Recipe
 User 1───* Rating *──1 Recipe
 User 1───* CookLog *─1 Recipe
@@ -633,8 +649,7 @@ fond pantry check chicken-adobo             # coverage %
 fond grocery from-plan week                 # pantry-aware, aisle-grouped
 fond user add "Sam" --allergen peanut --diet vegetarian
 fond scoreboard --since 2025-01-01
-```
-
+```text
 ### 9.3 TUI cook mode (Phase 2)
 
 A full-screen terminal view: current step highlighted, upcoming steps queued, **live countdown timers** firing alerts, and the backward-scheduled timeline as a side rail ("start rice at 6:30"). Built with `ratatui`. This serves the Kitchen Novice and Power User alike.
@@ -655,7 +670,7 @@ Warm, kitchen-evoking palette (caramel/fond-brown, cream); monospace-friendly CL
 
 Axes: **Data Ownership** (locked-in ↔ user-owned) and **Cooking Depth** (catalog-only ↔ active-cooking-aid).
 
-```
+```text
                  Active cooking aid
                         ▲
           Paprika ·     │        · fond (target)
@@ -736,6 +751,7 @@ Mirrors `toku`'s proven choices where sensible; deviations are justified.
 Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines. Effort is in *calendar* terms at ~10 hrs/week.
 
 ### Phase 0 — First Recipe *(MVP groundwork)*
+
 - **Theme:** Prove the spine end-to-end with one recipe.
 - **Goal:** `fond init`, parse a `.cook` file, index to SQLite, `fond view` it.
 - **Deliverables:** (1) crate scaffold + CI; (2) `.cook` parse via `cooklang-rs` spike; (3) SQLite schema + refinery; (4) `init`/`add --file`/`view`/`reindex`.
@@ -746,6 +762,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Definition of done:** CI green on 3 OSes; one recipe round-trips losslessly.
 
 ### Phase 1 — Minimum Usable Kitchen *(MVP)*
+
 - **Theme:** A power user lives in fond daily.
 - **Goal:** Import the collection, search it, basic pantry + shopping list.
 - **Deliverables:** (1) Paprika import (+dry-run/review); (2) schema.org URL import; (3) FTS5 search + filters + tags; (4) presence-based pantry + `pantry check` coverage; (5) basic grocery list from a recipe.
@@ -756,6 +773,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Definition of done:** Power User persona fully served offline.
 
 ### Phase 2 — Cook's Companion *(Beta)*
+
 - **Theme:** fond helps you actually cook.
 - **Goal:** Timeline engine, TUI cook mode, scaling, scoreboard, notes/ratings.
 - **Deliverables:** (1) timeline DAG + backward scheduling (single recipe); (2) `ratatui` cook mode w/ live timers; (3) linear scaling + non-linear warnings; (4) notes/ratings/cook-log + scoreboard.
@@ -766,6 +784,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Definition of done:** Novice + Baking + Power personas get cooking value.
 
 ### Phase 3 — Family Kitchen *(Beta→1.0)*
+
 - **Theme:** The whole household.
 - **Goal:** Family profiles, dietary/allergen filtering, meal planning, NYT/Cook's Illustrated import, informational nutrition.
 - **Deliverables:** (1) `user` profiles + per-user notes/ratings; (2) dietary/allergen filters + flags; (3) meal planning + pantry-aware consolidated grocery lists; (4) authenticated NYT/Cook's Illustrated importers; (5) USDA nutrition estimates.
@@ -776,6 +795,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Definition of done:** Meal-Prep + Dietary-Family personas served; data model declared **stable** → 1.0.
 
 ### Phase 4 — Web Interface *(Post-1.0)*
+
 - **Theme:** Beyond the terminal.
 - **Goal:** `fond serve` web UI for non-CLI household members.
 - **Deliverables:** (1) Axum+HTMX read/search UI; (2) recipe view + cook mode in browser; (3) meal plan + grocery UI.
@@ -784,6 +804,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Cut line:** No multi-tenant/cloud; LAN/self-host only.
 
 ### Phase 5 — Native Apple Apps *(Post-1.0)*
+
 - **Theme:** Kitchen-native devices.
 - **Goal:** iOS/iPad/macOS/Watch over UniFFI.
 - **Deliverables:** UniFFI binding; SwiftUI recipe + cook-mode app; Watch timers.
@@ -791,14 +812,17 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Cut line:** Read/cook first; editing later.
 
 ### Phase 6 — Smart Features *(Research)*
+
 - OCR of recipe cards; AI substitution suggestions; smart "what can I cook?" ranking. All 🔴/⛔ until earlier phases are solid.
 
 ### Phase 7 — Sync & Multi-Device *(Research→Post-1.0)*
+
 - **Goal:** Optional, user-controlled sync across devices.
 - **Recommendation:** Evaluate **file-based sync** (the `.cook` files already sync via Dropbox/Syncthing/git) **before** CRDTs; if relational overlays need merging, evaluate `cr-sqlite` (as toku did). `[Validation Required]`
 - **Risks:** Conflict resolution (🔴). Deferred deliberately.
 
 ### Phase 8 — Moonshots *(Research)*
+
 - Multi-recipe meal-time coordination (oven/stove contention solver); community recipe sharing (opt-in, ownership-preserving); voice cook mode.
 
 ### 13.1 Roadmap at a glance
@@ -822,6 +846,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 A concrete plan to reach a usable MVP (Phases 0→1) for the solo developer.
 
 ### 14.1 De-risking spikes (do these first, in order)
+
 1. **`cooklang-rs` spike (A3).** Parse 10 real recipes, round-trip, assess gaps. *Go/no-go on the parser.* (S)
 2. **Paprika format spike (A7).** Crack a real `.paprikarecipes`, map fields. (M)
 3. **schema.org extraction spike (A8).** Pull JSON-LD from 5 food blogs. (S)
@@ -842,9 +867,10 @@ A concrete plan to reach a usable MVP (Phases 0→1) for the solo developer.
 | E9 | Basic grocery list from recipe | S | 1 |
 | E10 | Export (json/paprika) + docs (mdBook) | M | 1 |
 
-*(S≈1–2 wks, M≈2–4 wks, L≈4–8 wks, XL≈8+ wks at 10 hrs/week.)*
+*S≈1–2 wks, M≈2–4 wks, L≈4–8 wks, XL≈8+ wks at 10 hrs/week.*
 
 ### 14.3 Due-diligence backlog (parallel, low effort)
+
 - Confirm Paprika ToS / personal-use stance for import.
 - Confirm NYT/ATK scraping legality per their ToS (gates Phase 3).
 - Source & license-check a starter ingredient/density/aisle dataset.
@@ -858,60 +884,70 @@ Full ADR documents are in [`docs/adr/`](docs/adr/).
 Ten ADRs covering the load-bearing technical decisions. Each: context → decision → alternatives rejected → consequences.
 
 #### ADR-001 — Rust as the runtime/language 🟢 `[Validated]`
+
 - **Context:** Need a portable, single-binary, fast, safe core that runs identically on Windows/macOS/Linux and can later bridge to native Apple and a web server.
 - **Decision:** Build in **Rust (2021 edition)**.
 - **Alternatives rejected:** *Go* — simpler but weaker domain modeling (enums/exhaustiveness) and no path to UniFFI/Swift; *TypeScript/Node* — runtime dependency, weaker for a CLI single-binary; *Swift* — Apple-centric, weak Windows/Linux CLI story; *Python* — packaging/perf pain for a distributable CLI.
 - **Consequences:** Steeper dev velocity early; superb distribution (`cargo-dist`) and reuse across all front-ends. Matches portfolio (`toku`).
 
 #### ADR-002 — Recipe storage: hybrid files + SQLite index 🟢 `[Validated]`
+
 - **Context:** Must honor data ownership (#1) and Cooklang-native (#4) while supporting fast search and relational overlays (ratings, pantry, plans).
 - **Decision:** **`.cook` plain-text files are the source of truth; SQLite is a derived, rebuildable index/overlay.** `fond reindex` reconstructs the DB from files.
 - **Alternatives rejected:** *DB-only (everything in SQLite)* — violates ownership, no human-editable files, lock-in; *files-only (no DB)* — search/filter/overlays become slow and awkward at scale; *document DB (e.g., embedded Mongo-like)* — heavier, no FTS5, no precedent.
 - **Consequences:** Slight write amplification (write file + index); enormous trust/ownership win; disaster recovery is trivial. Calibre/Obsidian precedent.
 
 #### ADR-003 — Cooklang integration: use `cooklang-rs` 🟡 `[Validation Required]`
+
 - **Context:** We must parse/emit `@ingredient{}`, `#cookware{}`, `~timer{}`, `---` metadata losslessly.
 - **Decision:** Adopt the community **`cooklang-rs`** crate; gate on a Phase-0 spike against real recipes.
 - **Alternatives rejected:** *Write our own parser* — multi-week 🔴 effort, reinvents a spec'd wheel, ongoing maintenance; *shell out to the reference parser* — adds a runtime dependency, breaks single-binary.
 - **Consequences:** If the spike reveals gaps (e.g., missing emit/round-trip), we contribute upstream or write a thin emitter on top. Parser risk is isolated behind a `fond-domain` trait so a swap is contained.
 
 #### ADR-004 — CLI structure & output 🟢 `[Validated]`
+
 - **Context:** Primary interface for MVP/Beta; must be scriptable yet human-friendly.
 - **Decision:** **`clap` v4 (derive)**, verb-noun commands, human tables by default (`comfy-table`), `--json` everywhere for scripting, `$EDITOR` integration for `edit`.
 - **Alternatives rejected:** *Hand-rolled arg parsing* — error-prone, poor help; *`structopt`* — superseded by clap derive; *interactive-only TUI* — not scriptable, bad for power users.
 - **Consequences:** Consistent UX, free help/completions; a stable `--json` contract that the web/native layers and tests can rely on.
 
 #### ADR-005 — DB schema: family-shared with per-user scoping 🟡 `[Validation Required]`
+
 - **Context:** Principle #3 demands multi-user from day one without over-engineering for a solo MVP.
 - **Decision:** **One shared SQLite DB.** Shared entities (recipes, ingredients, plans) are global; subjective entities (notes, ratings, cook logs, dietary profiles) carry a `user_id`. MVP defaults to a single active user but the columns exist from v1.
 - **Alternatives rejected:** *Per-user databases* — complicates sharing the recipe corpus, duplicates data; *no user concept until later* — guarantees a painful retrofit (violates #3); *full auth/RBAC* — overkill for a household.
 - **Consequences:** Cheap now, no migration later. True multi-device identity reconciliation is deferred to the sync phase.
 
 #### ADR-006 — Web scraping architecture 🔴 `[Validation Required]`
+
 - **Context:** Import from websites, including authenticated subscriptions, without legal/ethical overreach.
 - **Decision:** Isolated **`fond-scrape`** crate: schema.org/JSON-LD extraction first; site-specific fallback parsers; authenticated sessions using the **user's own credentials** stored in the OS keychain; strict no-redistribution. Per-site legality is `[Validation Required]`.
 - **Alternatives rejected:** *Headless browser (Playwright/Chromium)* — heavy dependency, brittle, breaks single-binary; *central scraping service* — legal/redistribution nightmare, violates local-first; *no scraping at all* — abandons a key persona need.
 - **Consequences:** Importers are best-effort and may break when sites change; breakage is sandboxed away from the core. If a site's ToS forbids automation, fond documents the gap rather than circumventing.
 
 #### ADR-007 — Unit conversion engine 🔴 `[Validation Required]`
+
 - **Context:** Volume↔weight conversion is ingredient-specific (density); vague units don't convert; baker's % exists.
 - **Decision:** Typed **`Quantity { value, unit, ingredient_ref }`** with a units module that converts *within* a family freely and *across* volume↔weight **only** via a per-ingredient **density table** bundled in the reference dataset. Unknown density → conversion refused with a clear message. Vague units pass through untouched.
 - **Alternatives rejected:** *Generic unit library (uom)* — handles physics units but not ingredient-specific culinary density or vague units; *assume a global density* — silently wrong; *force everything to grams* — loses the user's intent and vague units.
 - **Consequences:** Correct-or-honest behavior; the engine is done early but the *density data* grows over phases (a 🔴 data, not code, problem).
 
 #### ADR-008 — Cooking timeline engine 🔴 `[Validation Required]`
+
 - **Context:** Principle #8 — realistic backward-scheduled timelines with active/passive time and dependencies.
 - **Decision:** Model steps as a **directed acyclic graph** with `{duration, task_type, depends_on}`; compute a **backward schedule** from a target eat-time (latest-start per node via reverse topological pass). Durations come from `~timer{}` annotations plus heuristic parsing of step text; unparseable timing stays untimed (never fabricated).
 - **Alternatives rejected:** *Flat sum of all durations* — ignores parallelism, wildly overestimates; *forward-only scheduling* — can't answer "when do I start?"; *ML timing prediction* — no data, overkill, Research-tier.
 - **Consequences:** Single-recipe scheduling ships in Phase 2; multi-recipe resource contention (oven/stove) is a genuinely hard Phase 8 extension. Heuristic timing accuracy is `[Validation Required]`.
 
 #### ADR-009 — Pantry & grocery model 🟡 `[Validation Required]`
+
 - **Context:** Pantry tedium is the top product failure mode (§18); grocery lists must be pantry-aware and consolidated.
 - **Decision:** **Presence-first, opt-in quantity.** A `PantryItem` records `present` (bool) by default; `quantity/unit/expiry/par_level` are optional. Coverage % works from presence alone. Consumption deduction requires **explicit user confirmation** after cooking — never silent.
 - **Alternatives rejected:** *Mandatory quantity tracking* — guarantees abandonment (tedium); *fully automatic deduction* — drifts from reality, erodes trust; *no pantry* — abandons meal-prep/grocery value.
 - **Consequences:** Low-friction adoption with a growth path to power-user precision. Grocery consolidation depends on the units engine (ADR-007) and ontology.
 
 #### ADR-010 — Import architecture 🟡 `[Validation Required]`
+
 - **Context:** Many sources (Paprika, schema.org, NYT, ATK, files), each messy, with a <10-minute promise and a no-data-loss rule.
 - **Decision:** A trait-based **adapter pipeline** in `fond-import`: each source implements `Importer → Vec<RecipeDraft>`; drafts flow through a common normalize→to-Cooklang→validate→(write | review-queue) pipeline with a **dry-run** mode. Clean recipes write immediately; ambiguous ones queue for `fond review`.
 - **Alternatives rejected:** *One bespoke import path per source* — duplicated normalization, inconsistent quality; *strict all-or-nothing import* — one bad recipe fails the batch; *lossy "good enough" import* — violates the no-data-loss principle.
@@ -933,13 +969,14 @@ Ten ADRs covering the load-bearing technical decisions. Each: context → decisi
 | 010 | Trait-based import pipeline + dry-run | 🟡 |
 
 ### 14.5 90-day definition of success
+
 A real user imports their Paprika collection in <10 minutes, searches it instantly, checks pantry coverage, and generates a grocery list — entirely offline. That is the MVP bar.
 
 ---
 
 ## Section 15: Dependency Map
 
-```
+```text
 cooklang-rs spike ─┬─► E2 domain/parse ─► E3 index ─► E4 CLI ─┬─► E5 search
                    │                                          ├─► E6 Paprika import
 schema.org spike ──┼──────────────────────────────────────► E7 URL import
@@ -982,7 +1019,7 @@ The name is **fond** — *decided, not reopened*.
 - **CLI binary / crate / repo:** `fond` · `fond` · `kafkade/fond`.
 - **App name:** Fond.
 - **Config dir:** `~/.config/fond/` (XDG) or `~/.fond/`; **recipe dir:** `~/fond/`.
-- **Meaning:** the *fond* (browned flavor base in a pan) + *fondness* (family memories). 
+- **Meaning:** the *fond* (browned flavor base in a pan) + *fondness* (family memories).
 - **Taglines:** "The foundation of your kitchen" · "Build on your fond" · "Where cooking memories live."
 
 No further naming exploration is needed; this section exists only to record the decision.
@@ -992,24 +1029,29 @@ No further naming exploration is needed; this section exists only to record the 
 ## Section 17A: Success Metrics
 
 ### 17A.1 Activation (the make-or-break)
+
 - **Time-to-import:** P50 < 10 min for a 500-recipe Paprika collection. *(The single most important metric.)*
 - **Import fidelity:** ≥90% of recipes write clean (no review needed).
 - **First-search latency:** <100 ms on 5k recipes.
 
 ### 17A.2 Engagement
+
 - **Weekly cooking sessions** (`fond cook` invocations) per active household.
 - **Recipes cooked / month** (from CookLog) — proves it's a *cooking* tool, not a catalog.
 - **Notes & ratings added** — the "cooking memories" signal (A20).
 
 ### 17A.3 Retention / ownership
+
 - **Reindex success rate:** 100% (data-recovery guarantee must never fail).
 - **Zero data-loss incidents** across imports/edits.
 - **Export usage** treated as healthy (proves no lock-in), not churn.
 
 ### 17A.4 Community (principle #6)
+
 - GitHub stars, external contributors, new importer PRs, Cooklang-ecosystem mentions.
 
 ### 17A.5 Anti-metrics (we deliberately do NOT optimize)
+
 - Daily active *app-opens* (a kitchen tool shouldn't demand constant attention).
 - Time-in-app (less time fighting the tool is better).
 - Calorie/diet-tracking engagement (explicit non-goal).

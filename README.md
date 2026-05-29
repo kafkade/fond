@@ -79,7 +79,7 @@ foundation of a family kitchen.
 
 ## Architecture
 
-```
+```text
 ~/fond/
   recipes/            ← .cook files (SOURCE OF TRUTH)
     chicken-adobo.cook
@@ -112,4 +112,4 @@ foundation of a family kitchen.
 
 ---
 
-_Built by [kafkade](https://github.com/kafkade)._
+*Built by [kafkade](https://github.com/kafkade).*
