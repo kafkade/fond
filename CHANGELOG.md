@@ -35,3 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recipe repository with upsert, lookup (by id/slug/path), list, and FTS5 search
 - Atomic two-phase reindex: parse all `.cook` files then rebuild derived tables in a single transaction
 - CLI commands: `fond reindex`, `fond view <slug>`, `fond list`, `fond search <query>`
+- CLI commands: `fond add` (ingest `.cook` file or create from title), `fond edit <slug>`, `fond rm <slug>`
+- Shell completion generation via `fond completions <shell>` (bash, zsh, fish, PowerShell)
+- Global `--format table|json` and `--json` flags for machine-readable output on all commands
+- Tabular output with `comfy-table` for `fond list` and `fond search`
+- `$VISUAL` / `$EDITOR` integration for `fond add --title` and `fond edit`
+- File-first deletion in `fond rm` with confirmation prompt and `--yes` bypass
+- Single-recipe deletion from the index via `delete_recipe_by_slug`

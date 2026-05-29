@@ -30,3 +30,5 @@ zip = { version = "4", default-features = false, features = ["deflate"] }
 scraper = "0.22"
 refinery = { version = "0.9", features = ["rusqlite"] }
 tempfile = "3"
+clap_complete = "4"
+comfy-table = "7"
