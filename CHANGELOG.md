@@ -22,3 +22,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test corpus of 11 `.cook` recipe fixtures covering diverse cuisines and Cooklang features
 - Paprika export format parser proof-of-concept with `flate2`/`zip` (spike #2 — GO)
 - Spike report documenting Paprika format analysis and field mapping (`docs/spikes/002-paprika-format.md`)
+- schema.org/JSON-LD recipe extraction proof-of-concept with `scraper` (spike #3 — GO)
+- Spike report documenting JSON-LD patterns and field mapping (`docs/spikes/003-schema-org-extraction.md`)
