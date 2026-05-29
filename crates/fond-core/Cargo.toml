@@ -1,0 +1,16 @@
+[package]
+name = "fond-core"
+description = "Shared business logic and services for fond recipe manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fond-domain = { path = "../fond-domain", version = "0.1.0" }
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,55 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Lint markdown
+        uses: DavidAnson/markdownlint-cli2-action@v23
+        with:
+          globs: "**/*.md"
+
+  # NOTE: The Rust job uses a matrix that produces check names like
+  # "Rust (ubuntu-latest)", "Rust (macos-latest)", "Rust (windows-latest)".
+  # Adding any of these as required status checks requires updating
+  # kafkade/github-infra → repos/fond/main.tf (required_status_checks).
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
+
+  # Summary job that acts as the single required status check.
+  # The branch protection in github-infra requires "CI" to pass.
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [validate, rust]
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.validate.result }}" != "success" || "${{ needs.rust.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All checks passed"

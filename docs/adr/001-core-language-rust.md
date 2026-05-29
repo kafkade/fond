@@ -14,7 +14,7 @@ Section 12 already mirrors toku's proven stack: `clap`, `rusqlite`, `refinery`, 
 
 ## Decision
 
-fond will be built in **Rust (2021 edition)**. The CLI binary and all shared libraries use Rust as the single implementation language, with future interfaces consuming the same core rather than re-implementing business logic.
+fond will be built in **Rust (2024 edition)**. The CLI binary and all shared libraries use Rust as the single implementation language, with future interfaces consuming the same core rather than re-implementing business logic.
 
 This follows the same portfolio strategy already used successfully in `toku`: a Rust core first, then additional interfaces only after the domain model is stable.
 

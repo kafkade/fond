@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fond",
+    "crates/fond-core",
+    "crates/fond-domain",
+    "crates/fond-store",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["kafkade"]
+license = "MIT"
+repository = "https://github.com/kafkade/fond"
+
+[workspace.dependencies]
+thiserror = "2"
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+rusqlite = { version = "0.38", features = ["bundled", "column_decltype"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+directories = "6"

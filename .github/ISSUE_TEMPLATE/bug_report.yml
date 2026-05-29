@@ -1,0 +1,77 @@
+name: Bug Report
+description: Report a bug in fond
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the form below to help us investigate.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Crate / Component
+      description: Which part of fond is affected?
+      options:
+        - CLI (fond)
+        - Core library (fond-core)
+        - Domain model (fond-domain)
+        - Database / search (fond-store)
+        - Import pipeline (fond-import)
+        - Web scraping (fond-scrape)
+        - Timeline engine (fond-timeline)
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "fond version or commit hash (`fond --version`)"
+      placeholder: "0.1.0 or abc1234"
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you observe?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this behavior?
+      placeholder: |
+        1. Run `fond import paprika ~/recipes.paprikarecipes`
+        2. Run `fond search "chicken"`
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste any relevant terminal output or error messages
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other information that might help (recipe count, import source, etc.)

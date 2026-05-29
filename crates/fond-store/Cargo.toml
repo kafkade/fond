@@ -1,0 +1,21 @@
+[package]
+name = "fond-store"
+description = "SQLite persistence, migrations, and FTS5 search for fond recipe manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fond-core = { path = "../fond-core", version = "0.1.0" }
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+directories.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
