@@ -519,7 +519,7 @@ fn spike_summary_report() {
     eprintln!("║   Metadata present: {recipes_with_metadata}/{recipes_parsed}");
     eprintln!("║   Total warnings: {total_warnings}");
     eprintln!("║");
-    let fidelity = if ALL_FIXTURES.len() > 0 {
+    let fidelity = if !ALL_FIXTURES.is_empty() {
         (recipes_parsed as f64 / ALL_FIXTURES.len() as f64) * 100.0
     } else {
         0.0

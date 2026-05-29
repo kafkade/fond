@@ -399,7 +399,7 @@ fn reindex_skips_invalid_files() {
     let tmp = TempDir::new().unwrap();
     let recipes_dir = tmp.path().join("recipes");
     setup_recipes(&recipes_dir);
-    fs::write(recipes_dir.join("broken.cook"), &[0xFF, 0xFE, 0x00]).unwrap();
+    fs::write(recipes_dir.join("broken.cook"), [0xFF, 0xFE, 0x00]).unwrap();
 
     let db = FondDb::open_memory().unwrap();
     let report = reindex(&db, &recipes_dir).unwrap();

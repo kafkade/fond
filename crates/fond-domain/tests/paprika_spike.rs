@@ -2,7 +2,7 @@
 //!
 //! Go/No-Go criteria (from issue #2):
 //! - Go:    Can reliably extract title, ingredients, steps, source URL, photos
-//!          from a real export
+//!   from a real export
 //! - No-Go: Format encrypted or legally restricted → document limitation
 //!
 //! Findings from research:
