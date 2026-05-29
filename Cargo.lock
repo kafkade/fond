@@ -544,7 +544,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "fond"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "fond-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "fond-domain",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "fond-domain"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "cooklang",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "fond-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "cooklang",
