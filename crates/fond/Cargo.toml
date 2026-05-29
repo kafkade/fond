@@ -12,9 +12,9 @@ name = "fond"
 path = "src/main.rs"
 
 [dependencies]
-fond-core = { path = "../fond-core", version = "0.1.0" }
-fond-domain = { path = "../fond-domain", version = "0.1.0" }
-fond-store = { path = "../fond-store", version = "0.1.0" }
+fond-core = { path = "../fond-core", version = "0.2.0" }
+fond-domain = { path = "../fond-domain", version = "0.2.0" }
+fond-store = { path = "../fond-store", version = "0.2.0" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete.workspace = true
 comfy-table.workspace = true
