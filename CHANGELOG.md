@@ -27,3 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite/FTS5 derive-from-files and atomic reindex proof-of-concept (spike #4 — GO)
 - Full-text search across recipe titles, ingredients, steps, and tags with phrase and prefix queries
 - Spike report documenting hybrid storage validation and schema design (`docs/spikes/004-sqlite-fts5.md`)
+- Domain model types: `Recipe`, `RecipeIngredient`, `Step`, `Timer`, `Cookware` with serde serialization
+- Cooklang-to-domain parser (`parse_cook`) with YAML array metadata, numeric value, and tag support
+- `.cook` emitter (`emit_cook`) with raw-source passthrough for lossless file preservation
+- Slug generation module for URL-safe recipe identifiers
+- SQLite schema with refinery migrations: recipes, ingredients, steps, cookware, tags, users, FTS5 index
+- Recipe repository with upsert, lookup (by id/slug/path), list, and FTS5 search
+- Atomic two-phase reindex: parse all `.cook` files then rebuild derived tables in a single transaction
+- CLI commands: `fond reindex`, `fond view <slug>`, `fond list`, `fond search <query>`
