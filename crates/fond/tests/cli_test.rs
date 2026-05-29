@@ -478,3 +478,340 @@ fn format_flag_json_is_equivalent_to_json_flag() {
 
     assert_eq!(out1.stdout, out2.stdout);
 }
+
+// ──────────────────────────────────────────────────────────────
+// list with filters
+// ──────────────────────────────────────────────────────────────
+
+const PASTA_COOK: &str = "\
+---
+title: Pasta Carbonara
+servings: 4
+tags:
+  - italian
+  - pasta
+prep time: 10 min
+cook time: 20 min
+---
+
+Cook @pasta{1 lb} in boiling water for ~{10 minutes}.
+
+Whisk @eggs{3} with @pecorino{1 cup} and @black pepper{1 tsp}.
+
+Fry @guanciale{6 oz} until crispy, ~{8 minutes}.
+
+Toss hot pasta with egg mixture and guanciale.
+";
+
+#[test]
+fn list_filter_by_tag() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["list", "--tag", "italian"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pasta Carbonara"))
+        .stdout(predicate::str::contains("1 recipe(s)"));
+}
+
+#[test]
+fn list_filter_by_cuisine() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // --cuisine is sugar for --tag
+    fond(&tmp)
+        .args(["list", "--cuisine", "filipino"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Chicken Adobo"))
+        .stdout(predicate::str::contains("1 recipe(s)"));
+}
+
+#[test]
+fn list_filter_by_max_time() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Pasta carbonara: prep 10 + cook 20 = 30 min
+    fond(&tmp)
+        .args(["list", "--max-time", "30"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pasta Carbonara"));
+
+    // max-time 15 should exclude it
+    fond(&tmp)
+        .args(["list", "--max-time", "15"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No recipes match"));
+}
+
+#[test]
+fn list_filter_no_matches() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["list", "--tag", "nonexistent-tag"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No recipes match"));
+}
+
+#[test]
+fn list_filter_combined_tag_and_max_time() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Both have tags, but only pasta is <= 30 min
+    fond(&tmp)
+        .args(["list", "--max-time", "35"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pasta Carbonara"))
+        .stdout(predicate::str::contains("1 recipe(s)"));
+}
+
+#[test]
+fn list_filter_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["--json", "list", "--tag", "italian"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"slug\": \"pasta-carbonara\""))
+        .stdout(predicate::str::contains("\"tags\""));
+}
+
+// ──────────────────────────────────────────────────────────────
+// search with filters
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn search_with_tag_filter() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["search", "cook", "--tag", "italian"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pasta Carbonara"));
+}
+
+#[test]
+fn search_with_max_time_filter() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Both recipes have "cook" in step text, but only pasta <=30 min
+    fond(&tmp)
+        .args(["search", "cook", "--max-time", "30"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pasta Carbonara"));
+}
+
+#[test]
+fn search_json_includes_tags_and_source() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["--json", "search", "chicken"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"tags\""))
+        .stdout(predicate::str::contains("\"source\""));
+}
+
+// ──────────────────────────────────────────────────────────────
+// tag command
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn tag_list_all() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["tag", "--list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("filipino"))
+        .stdout(predicate::str::contains("braised"));
+}
+
+#[test]
+fn tag_list_json() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["--json", "tag", "--list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"name\""))
+        .stdout(predicate::str::contains("\"count\""));
+}
+
+#[test]
+fn tag_show_for_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["tag", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("filipino"))
+        .stdout(predicate::str::contains("braised"));
+}
+
+#[test]
+fn tag_add_and_verify() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["tag", "chicken-adobo", "--add", "dinner,easy"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added: dinner, easy"));
+
+    // Verify the tags persisted (list should now include new tags)
+    fond(&tmp)
+        .args(["tag", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dinner"))
+        .stdout(predicate::str::contains("easy"))
+        .stdout(predicate::str::contains("filipino"));
+}
+
+#[test]
+fn tag_remove_and_verify() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["tag", "chicken-adobo", "--remove", "braised"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed: braised"));
+
+    // Verify the tag was removed
+    let output = fond(&tmp).args(["tag", "chicken-adobo"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("braised"),
+        "braised should be removed, got: {stdout}"
+    );
+    assert!(stdout.contains("filipino"), "filipino should remain");
+}
+
+#[test]
+fn tag_add_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["--json", "tag", "chicken-adobo", "--add", "quick"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"added\""))
+        .stdout(predicate::str::contains("\"quick\""));
+}
+
+#[test]
+fn tag_survives_reindex() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Add a tag
+    fond(&tmp)
+        .args(["tag", "chicken-adobo", "--add", "weeknight"])
+        .assert()
+        .success();
+
+    // Reindex — since we wrote to the .cook file, the tag should persist
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["tag", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("weeknight"));
+}
+
+#[test]
+fn tag_add_then_search_finds_by_new_tag() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Add a tag
+    fond(&tmp)
+        .args(["tag", "chicken-adobo", "--add", "weeknight"])
+        .assert()
+        .success();
+
+    // Search by the new tag via FTS
+    fond(&tmp)
+        .args(["search", "weeknight"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Chicken Adobo"));
+
+    // Also filter by the new tag
+    fond(&tmp)
+        .args(["list", "--tag", "weeknight"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Chicken Adobo"));
+}

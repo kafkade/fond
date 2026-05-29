@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use comfy_table::{ContentArrangement, Table};
+use fond_domain::{RecipeFilter, escape_fts5_query};
 use fond_store::{FondDb, FondPaths, RecipeRepository};
 
 /// fond — a private, local-first personal cooking & recipe manager.
@@ -75,12 +76,62 @@ enum Commands {
     },
 
     /// List all indexed recipes.
-    List,
+    List {
+        /// Filter by tag (repeatable, AND semantics)
+        #[arg(long, short)]
+        tag: Vec<String>,
+
+        /// Maximum total time in minutes
+        #[arg(long)]
+        max_time: Option<u32>,
+
+        /// Filter by cuisine (matches tags)
+        #[arg(long)]
+        cuisine: Option<String>,
+
+        /// Filter by source (substring match)
+        #[arg(long)]
+        source: Option<String>,
+    },
 
     /// Search recipes by keyword.
     Search {
         /// Search query
         query: String,
+
+        /// Filter by tag (repeatable, AND semantics)
+        #[arg(long, short)]
+        tag: Vec<String>,
+
+        /// Maximum total time in minutes
+        #[arg(long)]
+        max_time: Option<u32>,
+
+        /// Filter by cuisine (matches tags)
+        #[arg(long)]
+        cuisine: Option<String>,
+
+        /// Filter by source (substring match)
+        #[arg(long)]
+        source: Option<String>,
+    },
+
+    /// Manage recipe tags.
+    Tag {
+        /// Recipe slug (omit to list all tags)
+        slug: Option<String>,
+
+        /// Tags to add (comma-separated)
+        #[arg(long)]
+        add: Option<String>,
+
+        /// Tags to remove (comma-separated)
+        #[arg(long)]
+        remove: Option<String>,
+
+        /// List all tags with counts
+        #[arg(long, short)]
+        list: bool,
     },
 
     /// Remove a recipe (file and index entry).
@@ -113,8 +164,25 @@ fn main() -> Result<()> {
         Commands::Add { file, title } => cmd_add(&paths, file, title, &fmt),
         Commands::Edit { slug } => cmd_edit(&paths, &slug),
         Commands::View { slug } => cmd_view(&paths, &slug, &fmt),
-        Commands::List => cmd_list(&paths, &fmt),
-        Commands::Search { query } => cmd_search(&paths, &query, &fmt),
+        Commands::List {
+            tag,
+            max_time,
+            cuisine,
+            source,
+        } => cmd_list(&paths, &fmt, tag, max_time, cuisine, source),
+        Commands::Search {
+            query,
+            tag,
+            max_time,
+            cuisine,
+            source,
+        } => cmd_search(&paths, &query, &fmt, tag, max_time, cuisine, source),
+        Commands::Tag {
+            slug,
+            add,
+            remove,
+            list,
+        } => cmd_tag(&paths, slug, add, remove, list, &fmt),
         Commands::Rm { slug, yes } => cmd_rm(&paths, &slug, yes, &fmt),
         Commands::Reindex => cmd_reindex(&paths, &fmt),
         Commands::Completions { shell } => {
@@ -486,17 +554,31 @@ fn print_recipe_human(recipe: &fond_domain::Recipe) {
     }
 }
 
-fn cmd_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
+fn cmd_list(
+    paths: &FondPaths,
+    fmt: &OutputFormat,
+    tags: Vec<String>,
+    max_time: Option<u32>,
+    cuisine: Option<String>,
+    source: Option<String>,
+) -> Result<()> {
     let db = open_db(paths)?;
     let repo = RecipeRepository::new(&db);
 
-    let recipes = repo.list_recipes().context("failed to list recipes")?;
+    let filter = build_cli_filter(tags, max_time, cuisine, source);
+    let recipes = repo
+        .list_recipes_filtered(&filter)
+        .context("failed to list recipes")?;
 
     if recipes.is_empty() {
         match fmt {
             OutputFormat::Json => println!("[]"),
             OutputFormat::Table => {
-                println!("No recipes indexed. Add .cook files and run `fond reindex`.");
+                if filter.is_empty() {
+                    println!("No recipes indexed. Add .cook files and run `fond reindex`.");
+                } else {
+                    println!("No recipes match the given filters.");
+                }
             }
         }
         return Ok(());
@@ -509,7 +591,7 @@ fn cmd_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
         OutputFormat::Table => {
             let mut table = Table::new();
             table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec!["Slug", "Title", "Source", "Tags"]);
+            table.set_header(vec!["Slug", "Title", "Source", "Tags", "Time"]);
 
             for r in &recipes {
                 let tags = if r.tags.is_empty() {
@@ -522,7 +604,12 @@ fn cmd_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
                 } else {
                     r.source.clone()
                 };
-                table.add_row(vec![&r.slug, &r.title, &source, &tags]);
+                let time = if r.total_time.is_empty() {
+                    "\u{2014}".to_string()
+                } else {
+                    r.total_time.clone()
+                };
+                table.add_row(vec![&r.slug, &r.title, &source, &tags, &time]);
             }
 
             println!("{table}");
@@ -532,11 +619,33 @@ fn cmd_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn cmd_search(paths: &FondPaths, query: &str, fmt: &OutputFormat) -> Result<()> {
+fn cmd_search(
+    paths: &FondPaths,
+    query: &str,
+    fmt: &OutputFormat,
+    tags: Vec<String>,
+    max_time: Option<u32>,
+    cuisine: Option<String>,
+    source: Option<String>,
+) -> Result<()> {
     let db = open_db(paths)?;
     let repo = RecipeRepository::new(&db);
 
-    let results = repo.search(query).context("search failed")?;
+    let filter = build_cli_filter(tags, max_time, cuisine, source);
+
+    // Escape user input for safe FTS5 MATCH
+    let escaped_query = escape_fts5_query(query);
+    if escaped_query.is_empty() {
+        match fmt {
+            OutputFormat::Json => println!("[]"),
+            OutputFormat::Table => println!("Empty search query."),
+        }
+        return Ok(());
+    }
+
+    let results = repo
+        .search_filtered(&escaped_query, &filter)
+        .context("search failed")?;
 
     if results.is_empty() {
         match fmt {
@@ -553,10 +662,20 @@ fn cmd_search(paths: &FondPaths, query: &str, fmt: &OutputFormat) -> Result<()> 
         OutputFormat::Table => {
             let mut table = Table::new();
             table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec!["Slug", "Title"]);
+            table.set_header(vec!["Slug", "Title", "Source", "Tags"]);
 
             for r in &results {
-                table.add_row(vec![&r.slug, &r.title]);
+                let tags = if r.tags.is_empty() {
+                    String::new()
+                } else {
+                    r.tags.join(", ")
+                };
+                let source = if r.source.is_empty() {
+                    "\u{2014}".to_string()
+                } else {
+                    r.source.clone()
+                };
+                table.add_row(vec![&r.slug, &r.title, &source, &tags]);
             }
 
             println!("{table}");
@@ -564,6 +683,211 @@ fn cmd_search(paths: &FondPaths, query: &str, fmt: &OutputFormat) -> Result<()> 
         }
     }
     Ok(())
+}
+
+fn cmd_tag(
+    paths: &FondPaths,
+    slug: Option<String>,
+    add: Option<String>,
+    remove: Option<String>,
+    list: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+
+    // Mode 1: list all tags
+    if list || (slug.is_none() && add.is_none() && remove.is_none()) {
+        let tags = repo.list_tags().context("failed to list tags")?;
+
+        if tags.is_empty() {
+            match fmt {
+                OutputFormat::Json => println!("[]"),
+                OutputFormat::Table => println!("No tags found."),
+            }
+            return Ok(());
+        }
+
+        match fmt {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&tags)?);
+            }
+            OutputFormat::Table => {
+                let mut table = Table::new();
+                table.set_content_arrangement(ContentArrangement::Dynamic);
+                table.set_header(vec!["Tag", "Recipes"]);
+
+                for t in &tags {
+                    table.add_row(vec![&t.name, &t.count.to_string()]);
+                }
+
+                println!("{table}");
+                println!("\n{} tag(s)", tags.len());
+            }
+        }
+        return Ok(());
+    }
+
+    // Mode 2: modify tags on a specific recipe
+    let slug = slug.context(
+        "recipe slug is required for --add / --remove — use `fond tag --list` to list all tags",
+    )?;
+
+    // Parse comma-separated tag lists
+    let tags_to_add: Vec<String> = add
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let tags_to_remove: Vec<String> = remove
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if tags_to_add.is_empty() && tags_to_remove.is_empty() {
+        // Show tags for this recipe
+        let result = repo
+            .get_tags_for_slug(&slug)
+            .context("failed to query tags")?
+            .with_context(|| format!("no recipe found with slug '{slug}'"))?;
+
+        let (_, current_tags) = result;
+
+        match fmt {
+            OutputFormat::Json => {
+                let out = serde_json::json!({
+                    "slug": slug,
+                    "tags": current_tags,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            }
+            OutputFormat::Table => {
+                if current_tags.is_empty() {
+                    println!("{slug}: (no tags)");
+                } else {
+                    println!("{slug}: {}", current_tags.join(", "));
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Get current tags and file path
+    let record = repo
+        .get_recipe_by_slug(&slug)
+        .context("database query failed")?
+        .with_context(|| format!("no recipe found with slug '{slug}'"))?;
+
+    let result = repo
+        .get_tags_for_slug(&slug)
+        .context("failed to query tags")?
+        .with_context(|| format!("no recipe found with slug '{slug}'"))?;
+
+    let (_, current_tags) = result;
+
+    // Compute new tag set
+    let mut new_tags: Vec<String> = current_tags.clone();
+    for tag in &tags_to_add {
+        if !new_tags.contains(tag) {
+            new_tags.push(tag.clone());
+        }
+    }
+    new_tags.retain(|t| !tags_to_remove.contains(t));
+    new_tags.sort();
+
+    // Update the .cook file on disk (source of truth)
+    let dir = recipes_dir(paths);
+    let file_path = dir.join(&record.file_path);
+
+    if !file_path.exists() {
+        anyhow::bail!(
+            "recipe file not found at {} — run `fond reindex` to repair",
+            file_path.display()
+        );
+    }
+
+    let content = std::fs::read_to_string(&file_path).context("failed to read recipe file")?;
+    let updated_content = fond_domain::update_tags_in_cook_source(&content, &new_tags);
+
+    // Write atomically: temp file then rename
+    let tmp_path = file_path.with_extension("cook.tmp");
+    std::fs::write(&tmp_path, &updated_content)
+        .with_context(|| format!("failed to write temp file: {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, &file_path)
+        .with_context(|| format!("failed to rename temp file to {}", file_path.display()))?;
+
+    // Re-parse and re-index from the updated file
+    let stem = file_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&slug);
+
+    let recipe = fond_domain::parse_cook(&updated_content, stem)
+        .map_err(|e| anyhow::anyhow!("failed to parse updated recipe: {e}"))?;
+
+    let hash = content_hash(&updated_content);
+    repo.upsert_recipe(&record.file_path, &recipe, &hash)
+        .context("failed to re-index recipe after tag update")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "slug": slug,
+                "tags": new_tags,
+                "added": tags_to_add,
+                "removed": tags_to_remove,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            if !tags_to_add.is_empty() {
+                println!("Added: {}", tags_to_add.join(", "));
+            }
+            if !tags_to_remove.is_empty() {
+                println!("Removed: {}", tags_to_remove.join(", "));
+            }
+            println!(
+                "Tags for {slug}: {}",
+                if new_tags.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    new_tags.join(", ")
+                }
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Build a `RecipeFilter` from CLI flags.
+fn build_cli_filter(
+    mut tags: Vec<String>,
+    max_time: Option<u32>,
+    cuisine: Option<String>,
+    source: Option<String>,
+) -> RecipeFilter {
+    // --cuisine is sugar for --tag (cuisines are tags in Cooklang)
+    if let Some(c) = cuisine {
+        let normalized = c.trim().to_lowercase();
+        if !normalized.is_empty() && !tags.contains(&normalized) {
+            tags.push(normalized);
+        }
+    }
+
+    RecipeFilter {
+        tags,
+        max_time_minutes: max_time,
+        source,
+    }
 }
 
 fn cmd_rm(paths: &FondPaths, slug: &str, skip_confirm: bool, fmt: &OutputFormat) -> Result<()> {

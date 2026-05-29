@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Filtered recipe listing with `fond list --tag <tag> --max-time <minutes> --cuisine <cuisine> --source <url>`
+- Filtered full-text search with `fond search <query> --tag --max-time --cuisine --source`
+- Tag management command: `fond tag --list`, `fond tag <slug>`, `fond tag <slug> --add <tags>`, `fond tag <slug> --remove <tags>`
+- JSON output support for all new tag and filter commands
+- Crate-level README files for `fond-domain`, `fond-core`, and `fond-store` (visible on crates.io)
+
 ## [0.2.2] - 2026-05-29
 
 ### Fixed

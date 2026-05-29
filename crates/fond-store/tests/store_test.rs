@@ -554,3 +554,237 @@ fn performance_search_1k() {
     eprintln!("  [PERF] Average search: {avg_ms:.3}ms");
     assert!(avg_ms < 100.0, "Search avg {avg_ms:.1}ms, expected < 100ms");
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Filtered Search
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn search_filtered_by_tag() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let filter = fond_domain::RecipeFilter {
+        tags: vec!["italian".to_string()],
+        ..Default::default()
+    };
+    let results = repo.search_filtered("pasta", &filter).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].title, "Pasta alla Norma");
+}
+
+#[test]
+fn search_filtered_excludes_non_matching_tag() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let filter = fond_domain::RecipeFilter {
+        tags: vec!["italian".to_string()],
+        ..Default::default()
+    };
+    // "chicken" matches adobo and mapo tofu, but neither is italian
+    let results = repo.search_filtered("chicken", &filter).unwrap();
+    assert!(results.is_empty());
+}
+
+#[test]
+fn search_filtered_multiple_tags_and_semantics() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    // Mapo tofu has: chinese, sichuan, spicy, tofu
+    let filter = fond_domain::RecipeFilter {
+        tags: vec!["chinese".to_string(), "spicy".to_string()],
+        ..Default::default()
+    };
+    let results = repo.search_filtered("tofu", &filter).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].title, "Mapo Tofu");
+}
+
+#[test]
+fn search_filtered_by_max_time() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    // Adobo: prep 15 + cook 45 = 60 min
+    // Tofu/Pasta: no total_time but have timers
+    let filter = fond_domain::RecipeFilter {
+        max_time_minutes: Some(30),
+        ..Default::default()
+    };
+    let results = repo.search_filtered("chicken", &filter).unwrap();
+    // Adobo at 60 min should be excluded
+    assert!(
+        results.is_empty(),
+        "Adobo (60 min) should be excluded by max_time 30"
+    );
+}
+
+#[test]
+fn search_filtered_by_source() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let filter = fond_domain::RecipeFilter {
+        source: Some("Serious".to_string()),
+        ..Default::default()
+    };
+    let results = repo.search_filtered("tofu", &filter).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].source, "Serious Eats");
+}
+
+#[test]
+fn search_results_include_tags_and_source() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let results = repo.search("title:adobo").unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].tags.is_empty(), "Tags should be populated");
+    assert!(results[0].tags.contains(&"chicken".to_string()));
+    assert_eq!(results[0].source, "Filipino Kitchen");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Filtered List
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn list_filtered_by_tag() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let filter = fond_domain::RecipeFilter {
+        tags: vec!["vegetarian".to_string()],
+        ..Default::default()
+    };
+    let recipes = repo.list_recipes_filtered(&filter).unwrap();
+    assert_eq!(recipes.len(), 1);
+    assert_eq!(recipes[0].title, "Pasta alla Norma");
+}
+
+#[test]
+fn list_filtered_by_max_time() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    // Adobo: 60 min. Should appear when max_time >= 60
+    let filter = fond_domain::RecipeFilter {
+        max_time_minutes: Some(60),
+        ..Default::default()
+    };
+    let recipes = repo.list_recipes_filtered(&filter).unwrap();
+    let slugs: Vec<&str> = recipes.iter().map(|r| r.slug.as_str()).collect();
+    assert!(slugs.contains(&"classic-chicken-adobo"));
+}
+
+#[test]
+fn list_unfiltered_returns_all() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let recipes = repo.list_recipes().unwrap();
+    assert_eq!(recipes.len(), 3);
+}
+
+#[test]
+fn list_includes_total_time() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let recipes = repo.list_recipes().unwrap();
+    let adobo = recipes
+        .iter()
+        .find(|r| r.slug == "classic-chicken-adobo")
+        .unwrap();
+    // Adobo has prep 15 + cook 45 = 60 minutes computed
+    assert_eq!(adobo.total_time_minutes, Some(60));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Tag Management
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn list_tags_returns_all_with_counts() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let tags = repo.list_tags().unwrap();
+    assert!(!tags.is_empty());
+
+    // "chicken" should appear in at least 1 recipe
+    let chicken = tags.iter().find(|t| t.name == "chicken");
+    assert!(chicken.is_some(), "should find 'chicken' tag");
+    assert!(chicken.unwrap().count >= 1);
+}
+
+#[test]
+fn get_tags_for_slug() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let (_, tags) = repo
+        .get_tags_for_slug("classic-chicken-adobo")
+        .unwrap()
+        .expect("should find recipe");
+    assert!(tags.contains(&"chicken".to_string()));
+    assert!(tags.contains(&"filipino".to_string()));
+}
+
+#[test]
+fn get_tags_for_missing_slug() {
+    let db = FondDb::open_memory().unwrap();
+    let repo = RecipeRepository::new(&db);
+
+    let result = repo.get_tags_for_slug("nonexistent").unwrap();
+    assert!(result.is_none());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Combined filter composition
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn combined_tag_and_source_filter() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let filter = fond_domain::RecipeFilter {
+        tags: vec!["chinese".to_string()],
+        source: Some("Serious".to_string()),
+        ..Default::default()
+    };
+    let recipes = repo.list_recipes_filtered(&filter).unwrap();
+    assert_eq!(recipes.len(), 1);
+    assert_eq!(recipes[0].title, "Mapo Tofu");
+}
+
+#[test]
+fn filter_with_no_matches() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+    let repo = RecipeRepository::new(&db);
+
+    let filter = fond_domain::RecipeFilter {
+        tags: vec!["nonexistent-tag".to_string()],
+        ..Default::default()
+    };
+    let recipes = repo.list_recipes_filtered(&filter).unwrap();
+    assert!(recipes.is_empty());
+}
