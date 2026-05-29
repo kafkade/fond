@@ -8,4 +8,8 @@ pub enum DomainError {
     /// A value failed validation.
     #[error("invalid value for {field}: {reason}")]
     InvalidValue { field: &'static str, reason: String },
+
+    /// Cooklang parsing failed.
+    #[error("failed to parse Cooklang: {message}")]
+    ParseCooklang { message: String },
 }
