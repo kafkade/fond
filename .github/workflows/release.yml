@@ -129,7 +129,7 @@ jobs:
           toolchain: stable
 
       # Publish crates in dependency order:
-      # fond-domain (no deps) → fond-core → fond-store → fond-import, fond-scrape, fond-timeline → fond
+      # fond-domain (no deps) → fond-core → fond-store → fond
       # Each `cargo publish` needs a brief pause for crates.io index to update.
       - name: Publish workspace crates
         env:
@@ -146,8 +146,5 @@ jobs:
           publish_crate fond-domain
           publish_crate fond-core
           publish_crate fond-store
-          publish_crate fond-import
-          publish_crate fond-scrape
-          publish_crate fond-timeline
           publish_crate fond
           echo "✅ All crates published"

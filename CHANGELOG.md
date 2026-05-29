@@ -7,11 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-05-29
-
 ### Fixed
 
-- Fixed workspace dependency.
+- Workspace dependency.
+- Release matrix target.
 
 ## [0.2.0] - 2026-05-29
 
