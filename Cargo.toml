@@ -6,6 +6,7 @@ members = [
     "crates/fond-domain",
     "crates/fond-import",
     "crates/fond-store",
+    "crates/fond-timeline",
 ]
 
 [workspace.package]
@@ -20,6 +21,7 @@ fond-domain = { path = "crates/fond-domain", version = "0.3.0" }
 fond-core = { path = "crates/fond-core", version = "0.3.0" }
 fond-import = { path = "crates/fond-import", version = "0.3.0" }
 fond-store = { path = "crates/fond-store", version = "0.3.0" }
+fond-timeline = { path = "crates/fond-timeline", version = "0.3.0" }
 thiserror = "2"
 uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
@@ -37,3 +39,4 @@ refinery = { version = "0.9", features = ["rusqlite"] }
 tempfile = "3"
 clap_complete = "4"
 comfy-table = "7"
+ratatui = "0.29"

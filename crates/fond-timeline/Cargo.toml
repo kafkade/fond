@@ -1,0 +1,15 @@
+[package]
+name = "fond-timeline"
+description = "Cooking timeline DAG model and backward scheduler for fond"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fond-domain.workspace = true
+chrono.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+regex = "1"
