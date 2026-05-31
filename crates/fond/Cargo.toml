@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 fond-core.workspace = true
 fond-domain.workspace = true
+fond-import.workspace = true
 fond-store.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete.workspace = true
@@ -27,3 +28,6 @@ anyhow.workspace = true
 assert_cmd = "2"
 predicates = "3"
 tempfile.workspace = true
+flate2.workspace = true
+zip.workspace = true
+serde_json.workspace = true
