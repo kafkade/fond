@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Paprika import: `fond import paprika <path>` ingests `.paprikarecipes` / `.paprikarecipe` archives into `.cook` files with ingredient parsing, section headers, and provenance metadata
 - URL import: `fond import url <url>` extracts recipes from any schema.org/JSON-LD page with HTML fallback, `--dry-run` preview, and URL dedup
 - Pantry management: `fond pantry add|rm|list|check` tracks ingredient presence with fuzzy matching and per-recipe coverage %
+- Grocery list generation: `fond grocery from-recipe <slug>` with pantry subtraction, category grouping, and `--include-pantry` flag
+- JSON export: `fond export [--recipe <slug>] [--output <path>]` with schema-versioned envelope
+- Paprika export: `fond export --export-format paprika --output <path>` with round-trip compatible archive format
+- mdBook documentation: user guide, CLI reference, importing/exporting, pantry/grocery, architecture, and data model
 - `fond-import` crate with trait-based import pipeline, Paprika adapter, and schema.org adapter
 - Pantry overlay table (V003 migration) that survives `fond reindex`
 

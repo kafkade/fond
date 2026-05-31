@@ -253,7 +253,7 @@ const PREP_MODIFIERS: &[&str] = &[
 /// Normalize an ingredient or pantry item name for fuzzy matching.
 ///
 /// Lowercases, strips prep modifiers, collapses whitespace, trims.
-fn normalize_for_matching(name: &str) -> String {
+pub(crate) fn normalize_for_matching(name: &str) -> String {
     let mut s = name.to_lowercase();
 
     // Remove common prep modifiers
@@ -280,13 +280,13 @@ fn normalize_for_matching(name: &str) -> String {
 }
 
 /// Split a normalized name into words.
-fn to_words(s: &str) -> Vec<&str> {
+pub(crate) fn to_words(s: &str) -> Vec<&str> {
     s.split_whitespace().collect()
 }
 
 /// Check if all words of `phrase` appear in `text` as a contiguous subsequence
 /// (word-boundary aware phrase matching).
-fn phrase_matches(phrase_words: &[&str], text_words: &[&str]) -> bool {
+pub(crate) fn phrase_matches(phrase_words: &[&str], text_words: &[&str]) -> bool {
     if phrase_words.is_empty() {
         return false;
     }
@@ -313,7 +313,10 @@ fn phrase_matches(phrase_words: &[&str], text_words: &[&str]) -> bool {
 /// - Exact match always wins
 ///
 /// Returns (matched, Option<matched_pantry_item_name>).
-fn find_pantry_match(ingredient_name: &str, pantry_names: &[String]) -> (bool, Option<String>) {
+pub(crate) fn find_pantry_match(
+    ingredient_name: &str,
+    pantry_names: &[String],
+) -> (bool, Option<String>) {
     let norm_ing = normalize_for_matching(ingredient_name);
     let ing_words = to_words(&norm_ing);
 

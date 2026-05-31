@@ -1297,3 +1297,438 @@ fn pantry_quoted_multi_word_items() {
         .stdout(predicate::str::contains("olive oil"))
         .stdout(predicate::str::contains("soy sauce"));
 }
+
+// ──────────────────────────────────────────────────────────────
+// Grocery
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn grocery_help_shows_subcommands() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["grocery", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("from-recipe"));
+}
+
+#[test]
+fn grocery_from_recipe_basic() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Grocery list for"))
+        .stdout(predicate::str::contains("to buy"));
+}
+
+#[test]
+fn grocery_from_recipe_json() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let output = fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["recipe_slug"], "chicken-adobo");
+    assert!(json["items"].is_array());
+    assert!(json["categories"].is_array());
+    assert!(json["total_recipe_ingredients"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn grocery_subtracts_pantry() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Get full grocery list count
+    let full_output = fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let full: serde_json::Value = serde_json::from_slice(&full_output).unwrap();
+    let full_count = full["items"].as_array().unwrap().len();
+
+    // Add pantry items
+    fond(&tmp)
+        .args(["pantry", "add", "soy sauce", "garlic"])
+        .assert()
+        .success();
+
+    // Get reduced grocery list
+    let reduced_output = fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let reduced: serde_json::Value = serde_json::from_slice(&reduced_output).unwrap();
+    let reduced_count = reduced["items"].as_array().unwrap().len();
+
+    assert!(
+        reduced_count < full_count,
+        "pantry items should reduce the grocery list"
+    );
+    assert!(reduced["pantry_covered_count"].as_u64().unwrap() >= 2);
+}
+
+#[test]
+fn grocery_include_pantry_flag() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["pantry", "add", "soy sauce"])
+        .assert()
+        .success();
+
+    // Without flag - pantry items excluded
+    let without = fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let without_json: serde_json::Value = serde_json::from_slice(&without).unwrap();
+
+    // With flag - pantry items included
+    let with = fond(&tmp)
+        .args([
+            "grocery",
+            "from-recipe",
+            "chicken-adobo",
+            "--include-pantry",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let with_json: serde_json::Value = serde_json::from_slice(&with).unwrap();
+
+    assert!(
+        with_json["items"].as_array().unwrap().len()
+            > without_json["items"].as_array().unwrap().len()
+    );
+
+    // Find the covered item
+    let covered: Vec<&serde_json::Value> = with_json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["pantry_covered"].as_bool() == Some(true))
+        .collect();
+    assert!(
+        !covered.is_empty(),
+        "should have at least one pantry-covered item"
+    );
+}
+
+#[test]
+fn grocery_nonexistent_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["grocery", "from-recipe", "does-not-exist"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("recipe not found"));
+}
+
+#[test]
+fn grocery_items_have_categories() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let output = fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let items = json["items"].as_array().unwrap();
+
+    for item in items {
+        assert!(
+            item["category"].is_string(),
+            "every item should have a category"
+        );
+        assert!(
+            !item["category"].as_str().unwrap().is_empty(),
+            "category should not be empty"
+        );
+    }
+}
+
+#[test]
+fn grocery_table_shows_categories() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["grocery", "from-recipe", "chicken-adobo"])
+        .assert()
+        .success()
+        // Table should show category grouping markers
+        .stdout(predicate::str::contains("──"));
+}
+
+// ──────────────────────────────────────────────────────────────
+// fond export
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn export_json_stdout_single_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["export", "--recipe", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"schema_version\": 1"))
+        .stdout(predicate::str::contains("\"recipe_count\": 1"))
+        .stdout(predicate::str::contains("Chicken Adobo"));
+}
+
+#[test]
+fn export_json_stdout_all_recipes() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(
+        &tmp,
+        "toast.cook",
+        "---\ntitle: Toast\n---\n\nPut @bread{2 slices} in the toaster.\n",
+    );
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["export"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"recipe_count\": 2"))
+        .stdout(predicate::str::contains("Chicken Adobo"))
+        .stdout(predicate::str::contains("Toast"));
+}
+
+#[test]
+fn export_json_to_file() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out_path = tmp.path().join("export.json");
+    fond(&tmp)
+        .args(["export", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&out_path).unwrap();
+    assert!(content.contains("\"schema_version\": 1"));
+    assert!(content.contains("Chicken Adobo"));
+}
+
+#[test]
+fn export_json_preserves_ingredients_and_steps() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let output = fond(&tmp)
+        .args(["export", "--recipe", "chicken-adobo"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let recipes = json["recipes"].as_array().unwrap();
+    assert_eq!(recipes.len(), 1);
+
+    let recipe = &recipes[0];
+    let ingredients = recipe["ingredients"].as_array().unwrap();
+    assert!(ingredients.len() >= 3);
+
+    let names: Vec<&str> = ingredients
+        .iter()
+        .map(|i| i["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"soy sauce"));
+    assert!(names.contains(&"chicken thighs"));
+
+    // Steps should be present
+    let steps = recipe["steps"].as_array().unwrap();
+    assert!(!steps.is_empty());
+}
+
+#[test]
+fn export_json_preserves_tags() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let output = fond(&tmp)
+        .args(["export", "--recipe", "chicken-adobo"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let tags = json["recipes"][0]["tags"].as_array().unwrap();
+    let tag_strs: Vec<&str> = tags.iter().map(|t| t.as_str().unwrap()).collect();
+    assert!(tag_strs.contains(&"filipino"));
+    assert!(tag_strs.contains(&"braised"));
+}
+
+#[test]
+fn export_nonexistent_recipe_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["export", "--recipe", "nonexistent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("recipe not found"));
+}
+
+#[test]
+fn export_paprika_single_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out_path = tmp.path().join("chicken.paprikarecipe");
+    fond(&tmp)
+        .args([
+            "export",
+            "--export-format",
+            "paprika",
+            "--recipe",
+            "chicken-adobo",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Verify it's valid gzip'd JSON
+    let data = fs::read(&out_path).unwrap();
+    let mut decoder = flate2::read::GzDecoder::new(&data[..]);
+    let mut json_str = String::new();
+    std::io::Read::read_to_string(&mut decoder, &mut json_str).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(parsed["name"], "Chicken Adobo");
+}
+
+#[test]
+fn export_paprika_archive() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(
+        &tmp,
+        "toast.cook",
+        "---\ntitle: Toast\n---\n\nPut @bread{2 slices} in the toaster.\n",
+    );
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out_path = tmp.path().join("recipes.paprikarecipes");
+    fond(&tmp)
+        .args([
+            "export",
+            "--export-format",
+            "paprika",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Verify it's a valid ZIP with gzip'd entries
+    let file = fs::File::open(&out_path).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    assert_eq!(archive.len(), 2);
+
+    // Each entry should be valid gzip'd JSON
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut buf).unwrap();
+
+        let mut decoder = flate2::read::GzDecoder::new(&buf[..]);
+        let mut json_str = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut json_str).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(parsed["name"].as_str().is_some());
+    }
+}
+
+#[test]
+fn export_paprika_roundtrip() {
+    // Export as Paprika and verify it can be read back
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out_path = tmp.path().join("roundtrip.paprikarecipes");
+    fond(&tmp)
+        .args([
+            "export",
+            "--export-format",
+            "paprika",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Verify we can read it back with the Paprika importer
+    let data = fs::read(&out_path).unwrap();
+    let (recipes, _errors) = fond_import::paprika::parse_paprikarecipes_archive(&data);
+    assert_eq!(recipes.len(), 1);
+    assert_eq!(recipes[0].name, "Chicken Adobo");
+    assert!(
+        recipes[0]
+            .ingredients
+            .as_ref()
+            .unwrap()
+            .contains("soy sauce")
+    );
+}

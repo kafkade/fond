@@ -1038,3 +1038,227 @@ fn pantry_skips_empty_items() {
     assert_eq!(added.len(), 1);
     assert_eq!(added[0], "flour");
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Grocery
+// ═══════════════════════════════════════════════════════════════════
+
+fn setup_db_with_recipe() -> (FondDb, tempfile::TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let recipe_dir = tmp.path().join("recipes");
+    setup_recipes(&recipe_dir);
+
+    let db = FondDb::open_memory().unwrap();
+    let report = reindex(&db, &recipe_dir).unwrap();
+    assert!(report.errors.is_empty());
+    (db, tmp)
+}
+
+#[test]
+fn grocery_from_recipe_basic() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    let list = grocery.from_recipe("classic-chicken-adobo", false).unwrap();
+    let list = list.expect("recipe should exist");
+
+    assert_eq!(list.recipe_slug, "classic-chicken-adobo");
+    assert_eq!(list.recipe_title, "Classic Chicken Adobo");
+    assert!(list.total_recipe_ingredients > 0);
+    assert_eq!(list.pantry_covered_count, 0, "no pantry items yet");
+    assert_eq!(list.items.len(), list.total_recipe_ingredients);
+}
+
+#[test]
+fn grocery_subtracts_pantry_items() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let pantry = fond_store::PantryRepository::new(&db);
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    // Add some items to pantry
+    pantry.add_items(&["soy sauce", "garlic"]).unwrap();
+
+    let list = grocery
+        .from_recipe("classic-chicken-adobo", false)
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        list.pantry_covered_count >= 2,
+        "should cover soy sauce and garlic"
+    );
+    assert!(
+        list.items.len() < list.total_recipe_ingredients,
+        "should exclude pantry items"
+    );
+    // Pantry items should not appear in the list
+    assert!(
+        !list
+            .items
+            .iter()
+            .any(|i| i.name.to_lowercase().contains("soy sauce")),
+        "soy sauce should be excluded"
+    );
+}
+
+#[test]
+fn grocery_include_pantry_flag() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let pantry = fond_store::PantryRepository::new(&db);
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    pantry.add_items(&["soy sauce"]).unwrap();
+
+    // Without include_pantry
+    let without = grocery
+        .from_recipe("classic-chicken-adobo", false)
+        .unwrap()
+        .unwrap();
+    // With include_pantry
+    let with = grocery
+        .from_recipe("classic-chicken-adobo", true)
+        .unwrap()
+        .unwrap();
+
+    assert!(with.items.len() > without.items.len());
+    // The pantry item should be marked as covered
+    let soy_item = with
+        .items
+        .iter()
+        .find(|i| i.name.to_lowercase().contains("soy sauce"));
+    assert!(soy_item.is_some(), "pantry items included when flag is set");
+    assert!(soy_item.unwrap().pantry_covered);
+}
+
+#[test]
+fn grocery_items_grouped_by_category() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    let list = grocery
+        .from_recipe("classic-chicken-adobo", false)
+        .unwrap()
+        .unwrap();
+
+    // Categories should be ordered
+    assert!(!list.categories.is_empty());
+
+    // Items within the same category should be contiguous
+    let mut last_cat = "";
+    let mut seen_cats = std::collections::HashSet::new();
+    for item in &list.items {
+        if item.category != last_cat {
+            assert!(
+                !seen_cats.contains(item.category.as_str()),
+                "category '{}' appeared non-contiguously",
+                item.category
+            );
+            seen_cats.insert(item.category.clone());
+            last_cat = &item.category;
+        }
+    }
+}
+
+#[test]
+fn grocery_nonexistent_recipe() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    let result = grocery.from_recipe("does-not-exist", false).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn grocery_has_json_fields() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    let list = grocery
+        .from_recipe("pasta-alla-norma", false)
+        .unwrap()
+        .unwrap();
+
+    // Verify it serializes cleanly
+    let json = serde_json::to_value(&list).unwrap();
+    assert!(json["recipe_slug"].is_string());
+    assert!(json["recipe_title"].is_string());
+    assert!(json["total_recipe_ingredients"].is_number());
+    assert!(json["pantry_covered_count"].is_number());
+    assert!(json["items_to_buy"].is_number());
+    assert!(json["items"].is_array());
+    assert!(json["categories"].is_array());
+
+    // Check individual item shape
+    let first_item = &json["items"][0];
+    assert!(first_item["name"].is_string());
+    assert!(first_item["category"].is_string());
+    assert!(first_item["from_recipe"].is_string());
+}
+
+#[test]
+fn grocery_items_to_buy_count() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let pantry = fond_store::PantryRepository::new(&db);
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    pantry.add_items(&["olive oil", "garlic", "salt"]).unwrap();
+
+    let list = grocery
+        .from_recipe("pasta-alla-norma", false)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        list.items_to_buy,
+        list.items.len(),
+        "items_to_buy should match items when pantry excluded"
+    );
+    assert!(
+        list.items_to_buy < list.total_recipe_ingredients,
+        "some items covered by pantry"
+    );
+}
+
+#[test]
+fn grocery_fuzzy_matching_with_prep_modifier() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let pantry = fond_store::PantryRepository::new(&db);
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    // Pantry has "garlic", recipe has "garlic" with quantity and cloves unit
+    pantry.add_items(&["garlic"]).unwrap();
+
+    let list = grocery
+        .from_recipe("classic-chicken-adobo", false)
+        .unwrap()
+        .unwrap();
+
+    // garlic should be subtracted
+    assert!(list.pantry_covered_count >= 1);
+    assert!(
+        !list.items.iter().any(|i| i.name.to_lowercase() == "garlic"),
+        "garlic should be covered by pantry"
+    );
+}
+
+#[test]
+fn grocery_pantry_absent_items_not_subtracted() {
+    let (db, _tmp) = setup_db_with_recipe();
+    let pantry = fond_store::PantryRepository::new(&db);
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    // Add then remove
+    pantry.add_items(&["soy sauce"]).unwrap();
+    pantry.remove_items(&["soy sauce"]).unwrap();
+
+    let list = grocery
+        .from_recipe("classic-chicken-adobo", false)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        list.pantry_covered_count, 0,
+        "absent items should not be subtracted"
+    );
+    assert_eq!(list.items.len(), list.total_recipe_ingredients);
+}

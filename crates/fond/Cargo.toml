@@ -23,6 +23,10 @@ comfy-table.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+flate2.workspace = true
+zip.workspace = true
+chrono.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -31,3 +35,4 @@ tempfile.workspace = true
 flate2.workspace = true
 zip.workspace = true
 serde_json.workspace = true
+fond-import.workspace = true
