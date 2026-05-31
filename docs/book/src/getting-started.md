@@ -20,7 +20,7 @@ fond init
 
 This creates the fond data directory with:
 
-```
+```text
 ~/fond/
   recipes/        ← your .cook files (source of truth)
   photos/         ← content-addressed images

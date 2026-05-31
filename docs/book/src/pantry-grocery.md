@@ -13,6 +13,7 @@ fond pantry add "soy sauce" "vinegar" "garlic" "rice" "chicken thighs"
 ```
 
 Items are matched using fuzzy logic:
+
 - Case-insensitive: "Soy Sauce" matches "soy sauce"
 - Plurals handled: "eggs" matches "egg"
 - Common forms: "garlic cloves" matches "garlic"
@@ -40,7 +41,7 @@ fond pantry check chicken-adobo
 
 Output shows a coverage percentage and which ingredients are matched vs. missing:
 
-```
+```text
 Coverage: 60% (3/5 ingredients)
 
 ✓ soy sauce

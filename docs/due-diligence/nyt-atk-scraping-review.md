@@ -21,8 +21,8 @@ any publicly accessible recipe pages that include structured data.
 
 | Document | URL | Effective Date |
 |----------|-----|----------------|
-| NYT Terms of Service | https://help.nytimes.com/hc/en-us/articles/115014893428-Terms-of-Service | January 20, 2026 |
-| ATK Terms of Use | https://www.americastestkitchen.com/corporate-pages/terms-of-use | Current |
+| NYT Terms of Service | <https://help.nytimes.com/hc/en-us/articles/115014893428-Terms-of-Service> | January 20, 2026 |
+| ATK Terms of Use | <https://www.americastestkitchen.com/corporate-pages/terms-of-use> | Current |
 | fond ADR-006 | `docs/adr/006-web-scraping.md` | July 13, 2025 |
 | fond Roadmap §18 | `ROADMAP.md` (Failure Mode F1) | — |
 
@@ -109,7 +109,7 @@ manual archiving is restricted. The prohibition covers:
 > proprietary rights and laws and are the sole and exclusive property of ATK
 > and that you have no rights of ownership and may only use the data and
 > information subject to these Terms of Use
-
+>
 > ATK grants you a non-exclusive license to use the content and materials for
 > which you have subscribed and paid for solely in accordance with these Terms
 > of Use and your Service Subscription. Use of any of the materials for any

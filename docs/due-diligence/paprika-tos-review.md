@@ -17,8 +17,8 @@ consistent with Paprika's design philosophy and terms.
 
 | Document | URL | Last Modified |
 |----------|-----|---------------|
-| Terms of Use and EULA | https://paprikaapp.com/terms/ | Current as of 2025 |
-| Privacy Policy | https://paprikaapp.com/privacy/ | June 28, 2019 |
+| Terms of Use and EULA | <https://paprikaapp.com/terms/> | Current as of 2025 |
+| Privacy Policy | <https://paprikaapp.com/privacy/> | June 28, 2019 |
 | App Store descriptions | Apple App Store, public listings | Current |
 
 ## Key Findings

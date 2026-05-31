@@ -4,7 +4,7 @@ fond is built as a Cargo workspace with purpose-scoped crates.
 
 ## Crate Structure
 
-```
+```text
 fond/                   ← workspace root
 ├── crates/
 │   ├── fond/           ← Binary crate (CLI entry point, clap v4)
@@ -18,7 +18,7 @@ fond/                   ← workspace root
 
 ### Dependency Flow
 
-```
+```text
 fond (CLI binary)
   ├── fond-core
   ├── fond-domain
@@ -31,7 +31,7 @@ Import crates (`fond-import`) are I/O-free for persistence — they parse extern
 
 ## Storage Model
 
-```
+```text
 ~/fond/
   recipes/            ← .cook files (SOURCE OF TRUTH)
     chicken-adobo.cook

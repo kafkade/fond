@@ -4,7 +4,7 @@
 
 ---
 
-# User Guide
+## User Guide
 
 - [Getting Started](./getting-started.md)
 - [CLI Reference](./cli-reference.md)
@@ -14,7 +14,7 @@
 
 ---
 
-# Architecture
+## Architecture
 
 - [Overview](./architecture.md)
 - [Data Model](./data-model.md)
