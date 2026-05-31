@@ -676,6 +676,7 @@ version = "0.3.0"
 dependencies = [
  "chrono",
  "fond-domain",
+ "regex",
  "serde",
  "serde_json",
  "thiserror",
