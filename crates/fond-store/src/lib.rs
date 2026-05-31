@@ -6,6 +6,7 @@
 
 mod db;
 mod error;
+mod grocery;
 mod pantry;
 mod paths;
 pub mod reindex;
@@ -13,6 +14,7 @@ mod repo;
 
 pub use db::*;
 pub use error::*;
+pub use grocery::*;
 pub use pantry::*;
 pub use paths::*;
 pub use reindex::{ReindexReport, reindex};

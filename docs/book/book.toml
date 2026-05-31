@@ -1,0 +1,10 @@
+[book]
+title = "fond — Personal Cooking & Recipe Manager"
+authors = ["kafkade"]
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/kafkade/fond"
+edit-url-template = "https://github.com/kafkade/fond/edit/main/docs/book/{path}"

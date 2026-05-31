@@ -10,6 +10,7 @@ use comfy_table::{ContentArrangement, Table};
 use fond_domain::{RecipeFilter, escape_fts5_query};
 use fond_import::paprika;
 use fond_store::{FondDb, FondPaths, RecipeRepository};
+use serde::Serialize;
 
 /// fond — a private, local-first personal cooking & recipe manager.
 #[derive(Parser)]
@@ -35,6 +36,12 @@ struct Cli {
 enum OutputFormat {
     Table,
     Json,
+}
+
+#[derive(Clone, ValueEnum)]
+enum ExportFormat {
+    Json,
+    Paprika,
 }
 
 impl Cli {
@@ -154,10 +161,31 @@ enum Commands {
         action: PantryAction,
     },
 
+    /// Generate a grocery (shopping) list.
+    Grocery {
+        #[command(subcommand)]
+        action: GroceryAction,
+    },
+
     /// Import recipes from an external source.
     Import {
         #[command(subcommand)]
         source: ImportSource,
+    },
+
+    /// Export recipes to JSON or Paprika format.
+    Export {
+        /// Export format (json or paprika)
+        #[arg(long = "export-format", default_value = "json")]
+        export_format: ExportFormat,
+
+        /// Export a single recipe by slug (omit for full collection)
+        #[arg(long)]
+        recipe: Option<String>,
+
+        /// Output file path (required for Paprika; optional for JSON, defaults to stdout)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
     },
 
     /// Generate shell completions.
@@ -194,6 +222,21 @@ enum PantryAction {
     Check {
         /// Recipe slug (e.g., "chicken-adobo")
         slug: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GroceryAction {
+    /// Generate a shopping list from a recipe.
+    ///
+    /// Subtracts pantry items and groups by aisle/category.
+    FromRecipe {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+
+        /// Include items already in pantry (marked as covered)
+        #[arg(long)]
+        include_pantry: bool,
     },
 }
 
@@ -262,12 +305,23 @@ fn main() -> Result<()> {
             PantryAction::List { all } => cmd_pantry_list(&paths, all, &fmt),
             PantryAction::Check { slug } => cmd_pantry_check(&paths, &slug, &fmt),
         },
+        Commands::Grocery { action } => match action {
+            GroceryAction::FromRecipe {
+                slug,
+                include_pantry,
+            } => cmd_grocery_from_recipe(&paths, &slug, include_pantry, &fmt),
+        },
         Commands::Import { source } => match source {
             ImportSource::Paprika { path, dry_run } => {
                 cmd_import_paprika(&paths, &path, dry_run, &fmt)
             }
             ImportSource::Url { url, dry_run } => cmd_import_url(&paths, &url, dry_run, &fmt),
         },
+        Commands::Export {
+            export_format,
+            recipe,
+            output,
+        } => cmd_export(&paths, &export_format, recipe, output),
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "fond", &mut io::stdout());
             Ok(())
@@ -1228,6 +1282,363 @@ fn cmd_pantry_check(paths: &FondPaths, slug: &str, fmt: &OutputFormat) -> Result
                     println!("\nMissing: {}", missing.join(", "));
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_grocery_from_recipe(
+    paths: &FondPaths,
+    slug: &str,
+    include_pantry: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    let list = grocery
+        .from_recipe(slug, include_pantry)
+        .context("failed to generate grocery list")?;
+
+    let Some(list) = list else {
+        anyhow::bail!("recipe not found: {slug}");
+    };
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&list)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "Grocery list for: {} ({})",
+                list.recipe_title, list.recipe_slug
+            );
+            println!(
+                "{} ingredient(s), {} in pantry, {} to buy\n",
+                list.total_recipe_ingredients, list.pantry_covered_count, list.items_to_buy
+            );
+
+            if list.items.is_empty() {
+                if list.pantry_covered_count > 0 {
+                    println!("Everything is already in your pantry! 🎉");
+                } else {
+                    println!("No ingredients found for this recipe.");
+                }
+            } else {
+                let mut current_category = "";
+
+                let mut table = Table::new();
+                table.set_content_arrangement(ContentArrangement::Dynamic);
+                table.set_header(vec!["", "Qty", "Unit", "Ingredient", "Note"]);
+
+                for item in &list.items {
+                    if item.category != current_category {
+                        current_category = &item.category;
+                        // Add a category separator row
+                        table.add_row(vec![
+                            format!("── {current_category} ──"),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                        ]);
+                    }
+
+                    let status = if item.pantry_covered {
+                        "\u{2713}".to_string()
+                    } else if item.optional {
+                        "?".to_string()
+                    } else {
+                        "\u{2717}".to_string()
+                    };
+
+                    let qty = item.quantity.as_deref().unwrap_or("").to_string();
+                    let unit = item.unit.as_deref().unwrap_or("").to_string();
+                    let note = item.note.as_deref().unwrap_or("").to_string();
+
+                    table.add_row(vec![status, qty, unit, item.name.clone(), note]);
+                }
+
+                println!("{table}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Export
+// ═══════════════════════════════════════════════════════════════════
+
+/// JSON export envelope with schema version and metadata.
+#[derive(Serialize)]
+struct ExportEnvelope {
+    schema_version: u32,
+    fond_version: String,
+    exported_at: String,
+    recipe_count: usize,
+    recipes: Vec<fond_domain::Recipe>,
+}
+
+/// Build a full Recipe from DB record + parsed .cook content.
+///
+/// Uses DB for authoritative metadata (timestamps, slug, tags) and
+/// parses raw_source for ingredients, steps, cookware.
+fn build_export_recipe(
+    record: &fond_store::RecipeRecord,
+    tags: &[String],
+    paths: &FondPaths,
+) -> Result<fond_domain::Recipe> {
+    let content = {
+        let dir = recipes_dir(paths);
+        let file_path = dir.join(&record.file_path);
+        if file_path.exists() {
+            std::fs::read_to_string(&file_path).context("failed to read recipe file")?
+        } else if !record.raw_source.is_empty() {
+            record.raw_source.clone()
+        } else {
+            anyhow::bail!("recipe file not found: {}", record.file_path);
+        }
+    };
+
+    let mut recipe = fond_domain::parse_cook(&content, &record.slug)
+        .map_err(|e| anyhow::anyhow!("failed to parse recipe '{}': {e}", record.slug))?;
+
+    // Override with DB-authoritative fields
+    recipe.slug = record.slug.clone();
+    recipe.title = record.title.clone();
+    recipe.source = if record.source.is_empty() {
+        None
+    } else {
+        Some(record.source.clone())
+    };
+    recipe.source_url = if record.source_url.is_empty() {
+        None
+    } else {
+        Some(record.source_url.clone())
+    };
+    if let Ok(dt) = record.created_at.parse::<chrono::DateTime<chrono::Utc>>() {
+        recipe.created_at = dt;
+    }
+    if let Ok(dt) = record.updated_at.parse::<chrono::DateTime<chrono::Utc>>() {
+        recipe.updated_at = dt;
+    }
+    recipe.tags = tags.to_vec();
+
+    Ok(recipe)
+}
+
+/// Collect all recipes for export.
+fn collect_export_recipes(paths: &FondPaths) -> Result<Vec<fond_domain::Recipe>> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+
+    let summaries = repo.list_recipes().context("failed to list recipes")?;
+
+    let mut recipes = Vec::with_capacity(summaries.len());
+
+    for summary in &summaries {
+        let record = repo
+            .get_recipe_by_slug(&summary.slug)
+            .context("database query failed")?
+            .with_context(|| format!("recipe '{}' disappeared during export", summary.slug))?;
+
+        let tags = repo
+            .get_tags_for_slug(&summary.slug)
+            .context("failed to get tags")?
+            .map(|(_, tags)| tags)
+            .unwrap_or_default();
+
+        match build_export_recipe(&record, &tags, paths) {
+            Ok(recipe) => recipes.push(recipe),
+            Err(e) => {
+                eprintln!("Warning: skipping '{}': {e}", summary.slug);
+            }
+        }
+    }
+
+    Ok(recipes)
+}
+
+/// Collect a single recipe for export.
+fn collect_single_recipe(paths: &FondPaths, slug: &str) -> Result<fond_domain::Recipe> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+
+    let record = repo
+        .get_recipe_by_slug(slug)
+        .context("database query failed")?
+        .with_context(|| format!("recipe not found: {slug}"))?;
+
+    let tags = repo
+        .get_tags_for_slug(slug)
+        .context("failed to get tags")?
+        .map(|(_, tags)| tags)
+        .unwrap_or_default();
+
+    build_export_recipe(&record, &tags, paths)
+}
+
+/// Convert a domain Recipe to a PaprikaRecipe.
+fn recipe_to_paprika(recipe: &fond_domain::Recipe) -> paprika::PaprikaRecipe {
+    // Build ingredients text (one per line)
+    let ingredients = recipe
+        .ingredients
+        .iter()
+        .map(|ing| {
+            let qty = match (&ing.quantity, &ing.unit) {
+                (Some(q), Some(u)) => format!("{q} {u} "),
+                (Some(q), None) => format!("{q} "),
+                _ => String::new(),
+            };
+            format!("{qty}{}", ing.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Build directions text (one step per line)
+    let directions = recipe
+        .steps
+        .iter()
+        .map(|s| s.body.clone())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    paprika::PaprikaRecipe {
+        name: recipe.title.clone(),
+        uid: Some(uuid::Uuid::now_v7().to_string()),
+        description: recipe.description.clone(),
+        ingredients: Some(ingredients),
+        directions: Some(directions),
+        notes: None,
+        servings: recipe.servings.clone(),
+        prep_time: recipe.prep_time.clone(),
+        cook_time: recipe.cook_time.clone(),
+        total_time: recipe.total_time.clone(),
+        source: recipe.source.clone(),
+        source_url: recipe.source_url.clone(),
+        image_url: None,
+        photo: None,
+        photo_url: None,
+        photo_hash: None,
+        categories: if recipe.tags.is_empty() {
+            None
+        } else {
+            Some(recipe.tags.clone())
+        },
+        nutrition: None,
+        rating: None,
+        difficulty: None,
+        recipe_yield: recipe.recipe_yield.clone(),
+        on_favorites: None,
+        created: Some(recipe.created_at.to_rfc3339()),
+        hash: None,
+        scale: None,
+        extra: serde_json::Map::new(),
+    }
+}
+
+/// Write a single PaprikaRecipe as gzip-compressed JSON bytes.
+fn paprika_recipe_to_gzip(recipe: &paprika::PaprikaRecipe) -> Result<Vec<u8>> {
+    let json = serde_json::to_vec(recipe).context("failed to serialize Paprika recipe")?;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    io::Write::write_all(&mut encoder, &json)?;
+    encoder
+        .finish()
+        .context("failed to compress Paprika recipe")
+}
+
+fn cmd_export(
+    paths: &FondPaths,
+    export_format: &ExportFormat,
+    recipe_slug: Option<String>,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let recipes = if let Some(ref slug) = recipe_slug {
+        vec![collect_single_recipe(paths, slug)?]
+    } else {
+        collect_export_recipes(paths)?
+    };
+
+    match export_format {
+        ExportFormat::Json => {
+            let envelope = ExportEnvelope {
+                schema_version: 1,
+                fond_version: env!("CARGO_PKG_VERSION").to_string(),
+                exported_at: chrono::Utc::now().to_rfc3339(),
+                recipe_count: recipes.len(),
+                recipes,
+            };
+
+            let json =
+                serde_json::to_string_pretty(&envelope).context("failed to serialize export")?;
+
+            if let Some(ref path) = output {
+                std::fs::write(path, &json)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                eprintln!(
+                    "Exported {} recipe(s) to {}",
+                    envelope.recipe_count,
+                    path.display()
+                );
+            } else {
+                println!("{json}");
+            }
+        }
+        ExportFormat::Paprika => {
+            let output_path = output.as_deref().unwrap_or_else(|| {
+                if recipe_slug.is_some() {
+                    std::path::Path::new("export.paprikarecipe")
+                } else {
+                    std::path::Path::new("export.paprikarecipes")
+                }
+            });
+
+            if recipes.len() == 1
+                && output_path
+                    .extension()
+                    .is_some_and(|e| e == "paprikarecipe")
+            {
+                // Single recipe → .paprikarecipe (gzip'd JSON, no ZIP)
+                let paprika = recipe_to_paprika(&recipes[0]);
+                let compressed = paprika_recipe_to_gzip(&paprika)?;
+                std::fs::write(output_path, compressed)
+                    .with_context(|| format!("failed to write {}", output_path.display()))?;
+            } else {
+                // Collection → .paprikarecipes (ZIP archive)
+                let file = std::fs::File::create(output_path)
+                    .with_context(|| format!("failed to create {}", output_path.display()))?;
+                let mut archive = zip::ZipWriter::new(file);
+                let options = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored);
+
+                for recipe in &recipes {
+                    let paprika = recipe_to_paprika(recipe);
+                    let entry_name = format!("{}.paprikarecipe", recipe.slug);
+                    let compressed = paprika_recipe_to_gzip(&paprika)?;
+
+                    archive.start_file(&entry_name, options)?;
+                    io::Write::write_all(&mut archive, &compressed)?;
+                }
+
+                archive.finish()?;
+            }
+
+            eprintln!(
+                "Exported {} recipe(s) to {}",
+                recipes.len(),
+                output_path.display()
+            );
         }
     }
 
