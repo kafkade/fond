@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fond-timeline` crate: DAG model for recipe steps with task type classification (active/passive × prep/cook/rest), duration extraction from timer annotations and heuristic text parsing, and backward scheduling via reverse topological sort
 - Due diligence: ingredient dataset sourcing review (USDA, Open Food Facts, FoodOn, CulinaryDB)
 - Recipe scaling: `fond scale <slug> --to 2x` or `--servings 8` with linear quantity math, human-friendly fraction formatting, and non-linear warnings for leavening, salt, spices, and thickeners
+- Recipe notes: `fond note <slug> <text>` adds per-user notes to recipes, `fond note <slug>` lists them, `--delete <id>` removes
+- Recipe ratings: `fond rate <slug> <1-5>` sets a star rating (upsert per user), `fond rate <slug>` shows current rating with average
+- Cooking scoreboard: `fond scoreboard` shows most cooked, highest rated, and recent activity across cook logs, notes, and ratings with `--since` date filter and `--limit` control
 
 ## [0.3.0] - 2026-05-29
 
