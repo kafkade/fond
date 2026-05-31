@@ -8,6 +8,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use comfy_table::{ContentArrangement, Table};
 use fond_domain::{RecipeFilter, escape_fts5_query};
+use fond_import::paprika;
 use fond_store::{FondDb, FondPaths, RecipeRepository};
 
 /// fond — a private, local-first personal cooking & recipe manager.
@@ -147,10 +148,80 @@ enum Commands {
     /// Rebuild the search index from .cook files on disk.
     Reindex,
 
+    /// Manage your pantry (what's in your kitchen).
+    Pantry {
+        #[command(subcommand)]
+        action: PantryAction,
+    },
+
+    /// Import recipes from an external source.
+    Import {
+        #[command(subcommand)]
+        source: ImportSource,
+    },
+
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for
         shell: Shell,
+    },
+}
+
+#[derive(Subcommand)]
+enum PantryAction {
+    /// Add items to your pantry (mark as available).
+    Add {
+        /// Items to add (e.g., flour eggs "olive oil")
+        #[arg(required = true)]
+        items: Vec<String>,
+    },
+
+    /// Remove items from your pantry (mark as unavailable).
+    Rm {
+        /// Items to remove
+        #[arg(required = true)]
+        items: Vec<String>,
+    },
+
+    /// List items in your pantry.
+    List {
+        /// Show absent items too (not just present)
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Check pantry coverage for a recipe.
+    Check {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ImportSource {
+    /// Import recipes from a Paprika export file.
+    ///
+    /// Accepts .paprikarecipes (batch export) or .paprikarecipe (single).
+    Paprika {
+        /// Path to the Paprika export file
+        path: PathBuf,
+
+        /// Preview what would be imported without writing any files
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Import a recipe from a URL (schema.org/JSON-LD extraction).
+    ///
+    /// Fetches the page, extracts structured recipe data from JSON-LD,
+    /// and falls back to HTML scraping if no structured data is found.
+    Url {
+        /// URL to import from
+        url: String,
+
+        /// Preview what would be imported without writing any files
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -185,6 +256,18 @@ fn main() -> Result<()> {
         } => cmd_tag(&paths, slug, add, remove, list, &fmt),
         Commands::Rm { slug, yes } => cmd_rm(&paths, &slug, yes, &fmt),
         Commands::Reindex => cmd_reindex(&paths, &fmt),
+        Commands::Pantry { action } => match action {
+            PantryAction::Add { items } => cmd_pantry_add(&paths, &items, &fmt),
+            PantryAction::Rm { items } => cmd_pantry_rm(&paths, &items, &fmt),
+            PantryAction::List { all } => cmd_pantry_list(&paths, all, &fmt),
+            PantryAction::Check { slug } => cmd_pantry_check(&paths, &slug, &fmt),
+        },
+        Commands::Import { source } => match source {
+            ImportSource::Paprika { path, dry_run } => {
+                cmd_import_paprika(&paths, &path, dry_run, &fmt)
+            }
+            ImportSource::Url { url, dry_run } => cmd_import_url(&paths, &url, dry_run, &fmt),
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "fond", &mut io::stdout());
             Ok(())
@@ -950,6 +1033,438 @@ fn cmd_rm(paths: &FondPaths, slug: &str, skip_confirm: bool, fmt: &OutputFormat)
     }
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Pantry
+// ═══════════════════════════════════════════════════════════════════
+
+fn cmd_pantry_add(paths: &FondPaths, items: &[String], fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let item_refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+    let added = pantry
+        .add_items(&item_refs)
+        .context("failed to add pantry items")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "action": "add",
+                "items": added,
+                "count": added.len(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            if added.is_empty() {
+                println!("No items to add.");
+            } else {
+                println!(
+                    "Added {} item(s) to pantry: {}",
+                    added.len(),
+                    added.join(", ")
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_pantry_rm(paths: &FondPaths, items: &[String], fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let item_refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+    let removed = pantry
+        .remove_items(&item_refs)
+        .context("failed to remove pantry items")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "action": "remove",
+                "items": removed,
+                "count": removed.len(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            if removed.is_empty() {
+                println!("No matching items found in pantry.");
+            } else {
+                println!(
+                    "Removed {} item(s) from pantry: {}",
+                    removed.len(),
+                    removed.join(", ")
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_pantry_list(paths: &FondPaths, show_all: bool, fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let items = pantry
+        .list_items(show_all)
+        .context("failed to list pantry items")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&items)?);
+        }
+        OutputFormat::Table => {
+            if items.is_empty() {
+                if show_all {
+                    println!("Pantry is empty. Use `fond pantry add` to add items.");
+                } else {
+                    println!("No items in pantry. Use `fond pantry add` to add items.");
+                }
+            } else {
+                let mut table = Table::new();
+                table.set_content_arrangement(ContentArrangement::Dynamic);
+
+                if show_all {
+                    table.set_header(vec!["Item", "Status"]);
+                    for item in &items {
+                        let status = if item.present {
+                            "\u{2713} have".to_string()
+                        } else {
+                            "\u{2717} need".to_string()
+                        };
+                        table.add_row(vec![item.name.clone(), status]);
+                    }
+                } else {
+                    table.set_header(vec!["Item"]);
+                    for item in &items {
+                        table.add_row(vec![item.name.clone()]);
+                    }
+                }
+
+                println!("{table}");
+                println!("{} item(s)", items.len());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_pantry_check(paths: &FondPaths, slug: &str, fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let coverage = pantry
+        .check_coverage(slug)
+        .context("failed to check pantry coverage")?;
+
+    let Some(coverage) = coverage else {
+        anyhow::bail!("recipe not found: {slug}");
+    };
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&coverage)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "{} — {:.0}% coverage",
+                coverage.recipe_title, coverage.coverage_pct
+            );
+            println!(
+                "{}/{} ingredients available",
+                coverage.matched_count, coverage.total_ingredients
+            );
+            println!();
+
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["Ingredient", "Status", "Matched By"]);
+
+            for ing in &coverage.ingredients {
+                let status = if ing.matched {
+                    "\u{2713} have".to_string()
+                } else if ing.optional {
+                    "? optional".to_string()
+                } else {
+                    "\u{2717} need".to_string()
+                };
+                let matched_by = ing.matched_pantry_item.as_deref().unwrap_or("").to_string();
+                table.add_row(vec![ing.ingredient.clone(), status, matched_by]);
+            }
+
+            println!("{table}");
+
+            if coverage.missing_count > 0 {
+                let missing: Vec<&str> = coverage
+                    .ingredients
+                    .iter()
+                    .filter(|i| !i.matched && !i.optional)
+                    .map(|i| i.ingredient.as_str())
+                    .collect();
+                if !missing.is_empty() {
+                    println!("\nMissing: {}", missing.join(", "));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_import_paprika(
+    paths: &FondPaths,
+    source_path: &std::path::Path,
+    dry_run: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    if !source_path.exists() {
+        anyhow::bail!("file not found: {}", source_path.display());
+    }
+
+    // Parse the Paprika export
+    let (paprika_recipes, parse_errors) =
+        paprika::read_paprika_file(source_path).context("failed to read Paprika export")?;
+
+    if paprika_recipes.is_empty() && parse_errors.is_empty() {
+        match fmt {
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&fond_import::ImportReport::new())?
+                );
+            }
+            OutputFormat::Table => println!("No recipes found in the export file."),
+        }
+        return Ok(());
+    }
+
+    // Gather existing slugs and source URLs for duplicate detection
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+    let existing = repo
+        .list_recipes()
+        .context("failed to list existing recipes")?;
+    let existing_slugs: Vec<String> = existing.iter().map(|r| r.slug.clone()).collect();
+    let existing_source_urls: Vec<String> = existing
+        .iter()
+        .filter_map(|r| {
+            let record = repo.get_recipe_by_slug(&r.slug).ok()??;
+            let url = record.source_url.trim().to_lowercase();
+            if url.is_empty() { None } else { Some(url) }
+        })
+        .collect();
+
+    // Convert and prepare recipes
+    let (prepared, mut report) =
+        paprika::convert_paprika_batch(paprika_recipes, &existing_slugs, &existing_source_urls);
+
+    // Add parse errors to report
+    for err in &parse_errors {
+        if let Err(ref e) = err.result {
+            report.add(fond_import::ImportResult::Failed {
+                entry_name: err.entry_name.clone(),
+                error: e.clone(),
+            });
+        }
+    }
+
+    if dry_run {
+        // Dry-run: just report what would happen
+        match fmt {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            OutputFormat::Table => {
+                print_import_report(&report, true);
+            }
+        }
+        return Ok(());
+    }
+
+    // Write .cook files and index them
+    let dest_dir = recipes_dir(paths);
+    for prep in &prepared {
+        let dest = dest_dir.join(&prep.file_name);
+        std::fs::write(&dest, &prep.cook_text)
+            .with_context(|| format!("failed to write {}", dest.display()))?;
+
+        let hash = content_hash(&prep.cook_text);
+        repo.upsert_recipe(&prep.file_name, &prep.recipe, &hash)
+            .with_context(|| format!("failed to index {}", prep.file_name))?;
+    }
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        OutputFormat::Table => {
+            print_import_report(&report, false);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_import_url(paths: &FondPaths, url: &str, dry_run: bool, fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    // Validate URL scheme
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        anyhow::bail!("invalid URL: only http:// and https:// are supported");
+    }
+
+    // Fetch HTML via curl subprocess (HTTP stays outside fond-import)
+    let html = fetch_url(url).context("failed to fetch URL")?;
+
+    // Gather existing data for dedup
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+    let existing = repo
+        .list_recipes()
+        .context("failed to list existing recipes")?;
+    let existing_slugs: Vec<String> = existing.iter().map(|r| r.slug.clone()).collect();
+    let existing_source_urls: Vec<String> = existing
+        .iter()
+        .filter_map(|r| {
+            let record = repo.get_recipe_by_slug(&r.slug).ok()??;
+            let url = record.source_url.trim().to_lowercase();
+            if url.is_empty() { None } else { Some(url) }
+        })
+        .collect();
+
+    // Extract and convert
+    let (prepared, report) =
+        fond_import::schema_org::import_html(&html, url, &existing_slugs, &existing_source_urls);
+
+    if dry_run {
+        match fmt {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            OutputFormat::Table => {
+                print_import_report(&report, true);
+            }
+        }
+        return Ok(());
+    }
+
+    // Write .cook files and index them
+    let dest_dir = recipes_dir(paths);
+    for prep in &prepared {
+        let dest = dest_dir.join(&prep.file_name);
+        std::fs::write(&dest, &prep.cook_text)
+            .with_context(|| format!("failed to write {}", dest.display()))?;
+
+        let hash = content_hash(&prep.cook_text);
+        repo.upsert_recipe(&prep.file_name, &prep.recipe, &hash)
+            .with_context(|| format!("failed to index {}", prep.file_name))?;
+    }
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        OutputFormat::Table => {
+            print_import_report(&report, false);
+        }
+    }
+
+    Ok(())
+}
+
+/// Fetch HTML from a URL using curl subprocess.
+fn fetch_url(url: &str) -> Result<String> {
+    let output = std::process::Command::new("curl")
+        .args([
+            "-sL",
+            "--max-time",
+            "30",
+            "--max-redirs",
+            "5",
+            "-H",
+            "User-Agent: fond/0.3.0 (recipe importer)",
+            "-H",
+            "Accept: text/html,application/xhtml+xml",
+            "-w",
+            "\n%{http_code}",
+            url,
+        ])
+        .output()
+        .context("failed to run curl — is curl installed?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("curl failed: {stderr}");
+    }
+
+    let raw = String::from_utf8(output.stdout).context("response is not valid UTF-8")?;
+
+    // Extract HTTP status code from the last line (via -w flag)
+    let (body, status_line) = raw.rsplit_once('\n').unwrap_or((&raw, ""));
+    let status: u16 = status_line.trim().parse().unwrap_or(0);
+
+    if !(200..300).contains(&status) {
+        anyhow::bail!("HTTP {status} for {url}");
+    }
+
+    Ok(body.to_string())
+}
+
+fn print_import_report(report: &fond_import::ImportReport, dry_run: bool) {
+    let prefix = if dry_run { "[dry-run] " } else { "" };
+
+    if report.imported > 0 {
+        println!("{prefix}Imported: {} recipe(s)", report.imported);
+    }
+    if report.skipped > 0 {
+        println!("{prefix}Skipped:  {} recipe(s)", report.skipped);
+    }
+    if report.failed > 0 {
+        eprintln!("{prefix}Failed:   {} recipe(s)", report.failed);
+    }
+    println!("{prefix}Total:    {} recipe(s)", report.total);
+
+    // Show details for skipped/failed
+    for detail in &report.details {
+        match detail {
+            fond_import::ImportResult::Skipped { title, reason } => {
+                eprintln!("  Skipped: {title} — {reason}");
+            }
+            fond_import::ImportResult::Failed { entry_name, error } => {
+                eprintln!("  Failed:  {entry_name} — {error}");
+            }
+            _ => {}
+        }
+    }
 }
 
 fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {

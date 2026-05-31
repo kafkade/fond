@@ -788,3 +788,253 @@ fn filter_with_no_matches() {
     let recipes = repo.list_recipes_filtered(&filter).unwrap();
     assert!(recipes.is_empty());
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Pantry
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn pantry_add_items() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let added = pantry.add_items(&["flour", "eggs", "butter"]).unwrap();
+    assert_eq!(added.len(), 3);
+
+    let items = pantry.list_items(false).unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().all(|i| i.present));
+}
+
+#[test]
+fn pantry_add_is_idempotent() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    pantry.add_items(&["flour"]).unwrap();
+    pantry.add_items(&["flour"]).unwrap(); // second add
+
+    let items = pantry.list_items(false).unwrap();
+    assert_eq!(items.len(), 1, "should not duplicate");
+}
+
+#[test]
+fn pantry_add_case_insensitive() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    pantry.add_items(&["Flour"]).unwrap();
+    pantry.add_items(&["flour"]).unwrap(); // same item, different case
+
+    let items = pantry.list_items(false).unwrap();
+    assert_eq!(items.len(), 1, "should deduplicate case-insensitively");
+}
+
+#[test]
+fn pantry_remove_marks_absent() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    pantry.add_items(&["flour", "eggs"]).unwrap();
+    let removed = pantry.remove_items(&["flour"]).unwrap();
+    assert_eq!(removed, vec!["flour"]);
+
+    // Only present items
+    let present = pantry.list_items(false).unwrap();
+    assert_eq!(present.len(), 1);
+    assert_eq!(present[0].name, "eggs");
+
+    // All items (including absent)
+    let all = pantry.list_items(true).unwrap();
+    assert_eq!(all.len(), 2);
+    let flour = all
+        .iter()
+        .find(|i| i.name == "Flour" || i.name == "flour")
+        .unwrap();
+    assert!(!flour.present);
+}
+
+#[test]
+fn pantry_remove_nonexistent_returns_empty() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let removed = pantry.remove_items(&["nonexistent"]).unwrap();
+    assert!(removed.is_empty());
+}
+
+#[test]
+fn pantry_re_add_after_remove() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    pantry.add_items(&["flour"]).unwrap();
+    pantry.remove_items(&["flour"]).unwrap();
+    pantry.add_items(&["flour"]).unwrap(); // re-add
+
+    let items = pantry.list_items(false).unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].present);
+}
+
+#[test]
+fn pantry_check_coverage_basic() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let pantry = fond_store::PantryRepository::new(&db);
+    // Adobo needs: soy sauce, white vinegar, garlic, bay leaves,
+    //              chicken thighs, steamed rice
+    pantry
+        .add_items(&["soy sauce", "garlic", "chicken thighs"])
+        .unwrap();
+
+    let coverage = pantry
+        .check_coverage("classic-chicken-adobo")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(coverage.recipe_title, "Classic Chicken Adobo");
+    assert!(
+        coverage.matched_count >= 3,
+        "should match at least 3 ingredients"
+    );
+    assert!(coverage.total_ingredients >= 5);
+    assert!(coverage.coverage_pct > 0.0);
+    assert!(coverage.coverage_pct < 100.0);
+}
+
+#[test]
+fn pantry_check_coverage_full() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let pantry = fond_store::PantryRepository::new(&db);
+    // Add all adobo ingredients
+    pantry
+        .add_items(&[
+            "soy sauce",
+            "white vinegar",
+            "garlic",
+            "bay leaves",
+            "chicken thighs",
+            "steamed rice",
+        ])
+        .unwrap();
+
+    let coverage = pantry
+        .check_coverage("classic-chicken-adobo")
+        .unwrap()
+        .unwrap();
+    assert_eq!(coverage.coverage_pct, 100.0);
+    assert_eq!(coverage.missing_count, 0);
+}
+
+#[test]
+fn pantry_check_coverage_empty_pantry() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let coverage = pantry
+        .check_coverage("classic-chicken-adobo")
+        .unwrap()
+        .unwrap();
+    assert_eq!(coverage.matched_count, 0);
+    assert_eq!(coverage.coverage_pct, 0.0);
+}
+
+#[test]
+fn pantry_check_coverage_nonexistent_recipe() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let result = pantry.check_coverage("nonexistent").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn pantry_check_fuzzy_matching() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let pantry = fond_store::PantryRepository::new(&db);
+    // "olive oil" should match "olive oil" in pasta alla norma
+    pantry.add_items(&["olive oil"]).unwrap();
+
+    let coverage = pantry.check_coverage("pasta-alla-norma").unwrap().unwrap();
+    let oil_ing = coverage
+        .ingredients
+        .iter()
+        .find(|i| i.ingredient.to_lowercase().contains("olive oil"));
+    assert!(oil_ing.is_some(), "should find olive oil ingredient");
+    assert!(oil_ing.unwrap().matched, "olive oil should be matched");
+}
+
+#[test]
+fn pantry_absent_items_dont_match() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let pantry = fond_store::PantryRepository::new(&db);
+    pantry.add_items(&["soy sauce"]).unwrap();
+    pantry.remove_items(&["soy sauce"]).unwrap(); // now absent
+
+    let coverage = pantry
+        .check_coverage("classic-chicken-adobo")
+        .unwrap()
+        .unwrap();
+    let soy = coverage
+        .ingredients
+        .iter()
+        .find(|i| i.ingredient.to_lowercase().contains("soy sauce"));
+    assert!(soy.is_some());
+    assert!(!soy.unwrap().matched, "absent item should not match");
+}
+
+#[test]
+fn pantry_survives_reindex() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("fond.db");
+    let recipes_dir = tmp.path().join("recipes");
+    setup_recipes(&recipes_dir);
+
+    // First: open DB, reindex, add pantry items
+    {
+        let db = FondDb::open(&db_path).unwrap();
+        reindex(&db, &recipes_dir).unwrap();
+
+        let pantry = fond_store::PantryRepository::new(&db);
+        pantry.add_items(&["flour", "eggs", "butter"]).unwrap();
+    }
+
+    // Reindex again (should preserve pantry)
+    {
+        let db = FondDb::open(&db_path).unwrap();
+        reindex(&db, &recipes_dir).unwrap();
+
+        let pantry = fond_store::PantryRepository::new(&db);
+        let items = pantry.list_items(false).unwrap();
+        assert_eq!(items.len(), 3, "pantry should survive reindex");
+    }
+}
+
+#[test]
+fn pantry_list_empty() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let items = pantry.list_items(false).unwrap();
+    assert!(items.is_empty());
+}
+
+#[test]
+fn pantry_skips_empty_items() {
+    let db = FondDb::open_memory().unwrap();
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let added = pantry.add_items(&["", "  ", "flour"]).unwrap();
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0], "flour");
+}
