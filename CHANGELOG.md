@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - mdBook documentation: user guide, CLI reference, importing/exporting, pantry/grocery, architecture, and data model
 - `fond-import` crate with trait-based import pipeline, Paprika adapter, and schema.org adapter
 - Pantry overlay table (V003 migration) that survives `fond reindex`
+- Cooking timeline engine: `fond cook <slug> --serve-at <HH:MM> --plan` computes a backward-scheduled cooking plan from a target serve time with active/passive time breakdown
+- TUI cook mode: `fond cook <slug>` enters a full-screen interactive cook mode with step-by-step guidance, live countdown timers, and optional backward-scheduled timeline rail
+- Live countdown timers with pause/resume, terminal bell alerts on completion, and multiple concurrent timer support
+- Cook log persistence: cooking sessions are recorded with start/end time, steps completed, and total steps (V004 migration)
+- `fond-timeline` crate: DAG model for recipe steps with task type classification (active/passive × prep/cook/rest), duration extraction from timer annotations and heuristic text parsing, and backward scheduling via reverse topological sort
+- Due diligence: ingredient dataset sourcing review (USDA, Open Food Facts, FoodOn, CulinaryDB)
 
 ## [0.3.0] - 2026-05-29
 

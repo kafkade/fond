@@ -1732,3 +1732,205 @@ fn export_paprika_roundtrip() {
             .contains("soy sauce")
     );
 }
+
+// ──────────────────────────────────────────────────────────────
+// fond cook (timeline)
+// ──────────────────────────────────────────────────────────────
+
+/// A recipe with named timers and sections for rich timeline testing.
+const ADOBO_RICH: &str = "\
+---
+title: Rich Chicken Adobo
+servings: 4
+tags:
+  - filipino
+---
+
+Combine @soy sauce{1/2 cup}, @vinegar{1/2 cup}, and @garlic{6 cloves} in a bowl.
+
+Add @chicken thighs{2 lbs} to the marinade. Cover and refrigerate for at least ~marinate{1 hour}.
+
+Transfer everything to a dutch oven and bring to a boil over high heat.
+
+Reduce heat to medium-low, cover, and simmer for ~{35 minutes} until chicken is cooked through.
+
+Remove the chicken and increase heat. Reduce the sauce for ~{10 minutes}.
+
+Return chicken to the pot and coat with sauce. Serve over @steamed rice{}.
+";
+
+#[test]
+fn cook_timeline_table_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "rich-chicken-adobo.cook", ADOBO_RICH);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["cook", "rich-chicken-adobo", "--serve-at", "19:00"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Cooking Timeline: Rich Chicken Adobo",
+        ))
+        .stdout(predicate::str::contains("Serve at 19:00"))
+        .stdout(predicate::str::contains("Start"))
+        .stdout(predicate::str::contains("Duration"))
+        .stdout(predicate::str::contains("Marinate"));
+}
+
+#[test]
+fn cook_timeline_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "rich-chicken-adobo.cook", ADOBO_RICH);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let output = fond(&tmp)
+        .args([
+            "cook",
+            "rich-chicken-adobo",
+            "--serve-at",
+            "19:00",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["recipe_title"], "Rich Chicken Adobo");
+    assert_eq!(json["recipe_slug"], "rich-chicken-adobo");
+
+    let nodes = json["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 6);
+
+    // Check that timed nodes have durations
+    let marinate_node = &nodes[1];
+    assert_eq!(marinate_node["duration"]["seconds"], 3600);
+    assert_eq!(marinate_node["duration"]["source"], "Timer");
+
+    // Verify timing totals
+    assert!(json["total_active_seconds"].as_u64().unwrap() > 0);
+    assert!(json["total_passive_seconds"].as_u64().unwrap() > 0);
+    assert!(json["has_untimed_steps"].as_bool().unwrap());
+}
+
+#[test]
+fn cook_timeline_unknown_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["cook", "nonexistent", "--serve-at", "19:00"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no recipe found"));
+}
+
+#[test]
+fn cook_timeline_invalid_time_format() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "rich-chicken-adobo.cook", ADOBO_RICH);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["cook", "rich-chicken-adobo", "--serve-at", "not-a-time"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid time format"));
+}
+
+#[test]
+fn cook_timeline_simple_recipe_no_timers() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    let simple = "\
+---
+title: Simple Salad
+---
+
+Chop @lettuce{1 head} and @tomatoes{2}.
+
+Toss with @olive oil{2 tbsp} and @lemon juice{1 tbsp}.
+
+Serve immediately.
+";
+    write_fixture(&tmp, "simple-salad.cook", simple);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Should succeed even with no timers (all untimed)
+    fond(&tmp)
+        .args(["cook", "simple-salad", "--serve-at", "12:00"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cooking Timeline: Simple Salad"))
+        .stdout(predicate::str::contains("unknown duration"));
+}
+
+#[test]
+fn cook_timeline_shows_time_summary() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "rich-chicken-adobo.cook", ADOBO_RICH);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["cook", "rich-chicken-adobo", "--serve-at", "19:00"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Active:"))
+        .stdout(predicate::str::contains("Passive:"));
+}
+
+#[test]
+fn cook_plan_flag_gives_static_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "rich-chicken-adobo.cook", ADOBO_RICH);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args([
+            "cook",
+            "rich-chicken-adobo",
+            "--serve-at",
+            "19:00",
+            "--plan",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Cooking Timeline: Rich Chicken Adobo",
+        ));
+}
+
+#[test]
+fn cook_no_serve_at_in_plan_mode_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "rich-chicken-adobo.cook", ADOBO_RICH);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["cook", "rich-chicken-adobo", "--plan"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--serve-at is required"));
+}
+
+#[test]
+fn cook_help_shows_cook_command() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["cook", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("interactive cook mode"))
+        .stdout(predicate::str::contains("--serve-at"))
+        .stdout(predicate::str::contains("--plan"));
+}

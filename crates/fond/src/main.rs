@@ -12,6 +12,8 @@ use fond_import::paprika;
 use fond_store::{FondDb, FondPaths, RecipeRepository};
 use serde::Serialize;
 
+mod tui;
+
 /// fond — a private, local-first personal cooking & recipe manager.
 #[derive(Parser)]
 #[command(name = "fond", version, about)]
@@ -193,6 +195,20 @@ enum Commands {
         /// Shell to generate completions for
         shell: Shell,
     },
+
+    /// Plan a cooking timeline or enter interactive cook mode.
+    Cook {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+
+        /// Target serve time (HH:MM format, local time)
+        #[arg(long)]
+        serve_at: Option<String>,
+
+        /// Print static timeline table instead of entering TUI mode
+        #[arg(long)]
+        plan: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -326,6 +342,11 @@ fn main() -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "fond", &mut io::stdout());
             Ok(())
         }
+        Commands::Cook {
+            slug,
+            serve_at,
+            plan,
+        } => cmd_cook(&paths, &slug, serve_at.as_deref(), plan, &fmt),
     }
 }
 
@@ -1643,6 +1664,174 @@ fn cmd_export(
     }
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Cook (timeline)
+// ═══════════════════════════════════════════════════════════════════
+
+fn cmd_cook(
+    paths: &FondPaths,
+    slug: &str,
+    serve_at_str: Option<&str>,
+    plan: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+
+    let record = repo
+        .get_recipe_by_slug(slug)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no recipe found with slug '{slug}' — run `fond list` to see available recipes")
+        })?;
+
+    // Parse the .cook file for full recipe with steps/timers
+    let dir = recipes_dir(paths);
+    let file_path = dir.join(&record.file_path);
+    let content = if file_path.exists() {
+        std::fs::read_to_string(&file_path).context("failed to read recipe file")?
+    } else if !record.raw_source.is_empty() {
+        record.raw_source.clone()
+    } else {
+        anyhow::bail!(
+            "recipe file not found: {} — run `fond reindex` to repair",
+            record.file_path
+        );
+    };
+    let recipe = fond_domain::parse_cook(&content, slug)
+        .map_err(|e| anyhow::anyhow!("failed to parse recipe: {e}"))?;
+
+    // Build timeline DAG
+    let timeline = fond_timeline::build_timeline(&recipe);
+
+    if timeline.nodes.is_empty() {
+        eprintln!("No steps found in recipe '{slug}'.");
+        return Ok(());
+    }
+
+    // Parse optional serve-at time
+    let scheduled = if let Some(sat) = serve_at_str {
+        let serve_time = chrono::NaiveTime::parse_from_str(sat, "%H:%M")
+            .or_else(|_| chrono::NaiveTime::parse_from_str(sat, "%H:%M:%S"))
+            .context("Invalid time format — use HH:MM (e.g., 19:00)")?;
+
+        let today = chrono::Local::now().date_naive();
+        let mut serve_at = today.and_time(serve_time);
+        if serve_at < chrono::Local::now().naive_local() {
+            serve_at = (today + chrono::Duration::days(1)).and_time(serve_time);
+        }
+        Some(fond_timeline::schedule_backward(&timeline, serve_at))
+    } else {
+        None
+    };
+
+    // Decide output mode: --plan or --format json → static; otherwise TUI
+    let use_static = plan || matches!(fmt, OutputFormat::Json) || !atty::is(atty::Stream::Stdout);
+
+    if use_static {
+        if let Some(ref sched) = scheduled {
+            match fmt {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(sched)?);
+                }
+                OutputFormat::Table => {
+                    print_timeline(sched);
+                }
+            }
+        } else {
+            anyhow::bail!("--serve-at is required for --plan or --format json output");
+        }
+        return Ok(());
+    }
+
+    // TUI mode
+    let cook_result = tui::run_cook_mode(recipe, scheduled)?;
+
+    // Post-TUI: show summary and offer to save cook log
+    println!();
+    println!("  Cook session complete: {}", cook_result.recipe_title);
+    let dur_mins = cook_result.cook_duration.as_secs() / 60;
+    let dur_secs = cook_result.cook_duration.as_secs() % 60;
+    println!(
+        "  Steps: {}/{} | Duration: {}:{:02}",
+        cook_result.steps_completed, cook_result.total_steps, dur_mins, dur_secs,
+    );
+
+    // Save cook log
+    print!("  Save to cook log? [Y/n] ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().lock().read_line(&mut input)?;
+    let save = input.trim().is_empty() || input.trim().eq_ignore_ascii_case("y");
+
+    if save {
+        let now = chrono::Local::now();
+        let started = now - chrono::Duration::seconds(cook_result.cook_duration.as_secs() as i64);
+        let entry = fond_store::NewCookLog {
+            recipe_id: record.id,
+            user_id: None,
+            started_at: started.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            finished_at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            steps_completed: cook_result.steps_completed as i32,
+            total_steps: cook_result.total_steps as i32,
+            notes: String::new(),
+        };
+        let log_repo = fond_store::CookLogRepository::new(&db);
+        log_repo.save(&entry).context("failed to save cook log")?;
+        println!("  Cook log saved.");
+    }
+    println!();
+
+    Ok(())
+}
+
+fn print_timeline(sched: &fond_timeline::ScheduledTimeline) {
+    use fond_timeline::duration::format_duration;
+
+    println!();
+    println!("  Cooking Timeline: {}", sched.recipe_title);
+    println!(
+        "  Serve at {} — Start at {}",
+        sched.serve_at.format("%H:%M"),
+        sched.start_at.format("%H:%M"),
+    );
+    println!();
+
+    let mut table = Table::new();
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(vec!["Start", "Duration", "Type", "Step"]);
+
+    for sn in &sched.nodes {
+        let start = sn.scheduled_start.format("%H:%M").to_string();
+        let dur = match &sn.node.duration {
+            Some(d) => format_duration(d.seconds),
+            None => "—".to_string(),
+        };
+        let task_type = sn.node.task_type.label().to_string();
+        let label = sn.node.label.clone();
+        table.add_row(vec![start, dur, task_type, label]);
+    }
+
+    println!("{table}");
+    println!();
+
+    // Summary
+    let active_str = format_duration(sched.total_active_seconds);
+    let passive_str = format_duration(sched.total_passive_seconds);
+    let total = sched.total_active_seconds + sched.total_passive_seconds;
+    let total_str = format_duration(total);
+
+    println!(
+        "  Active: {} | Passive: {} | Timed total: {}",
+        active_str, passive_str, total_str
+    );
+
+    if sched.has_untimed_steps {
+        println!("  Note: Some steps have unknown duration (shown as —).");
+    }
+    println!();
 }
 
 fn cmd_import_paprika(
