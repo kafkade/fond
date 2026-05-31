@@ -223,6 +223,39 @@ enum Commands {
         #[arg(long, group = "scale_mode")]
         servings: Option<u32>,
     },
+
+    /// Add a note to a recipe, or list existing notes.
+    Note {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+
+        /// Note text (omit to list existing notes)
+        text: Vec<String>,
+
+        /// Delete a note by ID
+        #[arg(long)]
+        delete: Option<i64>,
+    },
+
+    /// Rate a recipe (1-5 stars), or show current rating.
+    Rate {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+
+        /// Rating score (1-5, omit to show current rating)
+        score: Option<i32>,
+    },
+
+    /// Show cooking scoreboard — most cooked, highest rated, recent activity.
+    Scoreboard {
+        /// Only show activity since this date (YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Number of entries per section (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -363,6 +396,11 @@ fn main() -> Result<()> {
         } => cmd_cook(&paths, &slug, serve_at.as_deref(), plan, &fmt),
         Commands::Scale { slug, to, servings } => {
             cmd_scale(&paths, &slug, to.as_deref(), servings, &fmt)
+        }
+        Commands::Note { slug, text, delete } => cmd_note(&paths, &slug, &text, delete, &fmt),
+        Commands::Rate { slug, score } => cmd_rate(&paths, &slug, score, &fmt),
+        Commands::Scoreboard { since, limit } => {
+            cmd_scoreboard(&paths, since.as_deref(), limit, &fmt)
         }
     }
 }
@@ -1784,16 +1822,24 @@ fn cmd_cook(
     let save = input.trim().is_empty() || input.trim().eq_ignore_ascii_case("y");
 
     if save {
+        // Prompt for an optional note before saving
+        print!("  Add a note? (enter text, or press Enter to skip): ");
+        io::stdout().flush()?;
+        let mut note_input = String::new();
+        io::stdin().lock().read_line(&mut note_input)?;
+        let note_text = note_input.trim().to_string();
+
+        let user_id = default_user_id(&db);
         let now = chrono::Local::now();
         let started = now - chrono::Duration::seconds(cook_result.cook_duration.as_secs() as i64);
         let entry = fond_store::NewCookLog {
             recipe_id: record.id,
-            user_id: None,
+            user_id,
             started_at: started.format("%Y-%m-%dT%H:%M:%S").to_string(),
             finished_at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
             steps_completed: cook_result.steps_completed as i32,
             total_steps: cook_result.total_steps as i32,
-            notes: String::new(),
+            notes: note_text,
         };
         let log_repo = fond_store::CookLogRepository::new(&db);
         log_repo.save(&entry).context("failed to save cook log")?;
@@ -1984,6 +2030,296 @@ fn format_scale(factor: f64) -> String {
         format!("{}", factor.round() as u32)
     } else {
         format!("{factor:.1}")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Notes, Ratings, Scoreboard
+// ═══════════════════════════════════════════════════════════════════
+
+/// Get the default user ID (1, created by V005 migration).
+fn default_user_id(db: &FondDb) -> Option<i64> {
+    db.conn()
+        .query_row("SELECT id FROM users WHERE name = 'default'", [], |row| {
+            row.get(0)
+        })
+        .ok()
+}
+
+fn cmd_note(
+    paths: &FondPaths,
+    slug: &str,
+    text: &[String],
+    delete: Option<i64>,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+    let note_repo = fond_store::NoteRepository::new(&db);
+
+    let record = repo
+        .get_recipe_by_slug(slug)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no recipe found with slug '{slug}' — run `fond list` to see available recipes")
+        })?;
+
+    let user_id = default_user_id(&db);
+
+    // Delete mode
+    if let Some(note_id) = delete {
+        let deleted = note_repo
+            .delete(note_id, user_id)
+            .context("failed to delete note")?;
+        if deleted {
+            match fmt {
+                OutputFormat::Json => println!(r#"{{"deleted": true, "id": {note_id}}}"#),
+                OutputFormat::Table => println!("Note #{note_id} deleted."),
+            }
+        } else {
+            anyhow::bail!("note #{note_id} not found or not owned by you");
+        }
+        return Ok(());
+    }
+
+    // Add mode (text provided)
+    if !text.is_empty() {
+        let body = text.join(" ");
+        let id = note_repo
+            .add(record.id, user_id, &body)
+            .context("failed to add note")?;
+
+        match fmt {
+            OutputFormat::Json => {
+                #[derive(Serialize)]
+                struct Added {
+                    id: i64,
+                    recipe: String,
+                    note: String,
+                }
+                let added = Added {
+                    id,
+                    recipe: slug.to_string(),
+                    note: body,
+                };
+                println!("{}", serde_json::to_string_pretty(&added)?);
+            }
+            OutputFormat::Table => {
+                println!("Note added to '{}' (#{id}).", record.title);
+            }
+        }
+        return Ok(());
+    }
+
+    // List mode (no text, no delete)
+    let notes = note_repo
+        .list_for_recipe(record.id, user_id)
+        .context("failed to list notes")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            #[derive(Serialize)]
+            struct NoteOut {
+                id: i64,
+                body: String,
+                created_at: String,
+            }
+            let out: Vec<NoteOut> = notes
+                .into_iter()
+                .map(|n| NoteOut {
+                    id: n.id,
+                    body: n.body,
+                    created_at: n.created_at,
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            if notes.is_empty() {
+                println!("No notes for '{}'.", record.title);
+            } else {
+                println!("Notes for '{}':\n", record.title);
+                for n in &notes {
+                    println!("  #{} ({})", n.id, n.created_at);
+                    println!("    {}\n", n.body);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_rate(paths: &FondPaths, slug: &str, score: Option<i32>, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+    let rating_repo = fond_store::RatingRepository::new(&db);
+
+    let record = repo
+        .get_recipe_by_slug(slug)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no recipe found with slug '{slug}' — run `fond list` to see available recipes")
+        })?;
+
+    let user_id = default_user_id(&db);
+
+    // Rate mode
+    if let Some(s) = score {
+        if !(1..=5).contains(&s) {
+            anyhow::bail!("rating must be between 1 and 5 (got {s})");
+        }
+        rating_repo
+            .rate(record.id, user_id, s)
+            .context("failed to save rating")?;
+
+        let stars = "★".repeat(s as usize) + &"☆".repeat(5 - s as usize);
+        match fmt {
+            OutputFormat::Json => {
+                #[derive(Serialize)]
+                struct Rated {
+                    recipe: String,
+                    score: i32,
+                }
+                let rated = Rated {
+                    recipe: slug.to_string(),
+                    score: s,
+                };
+                println!("{}", serde_json::to_string_pretty(&rated)?);
+            }
+            OutputFormat::Table => {
+                println!("Rated '{}': {stars}", record.title);
+            }
+        }
+        return Ok(());
+    }
+
+    // Show mode (no score)
+    let rating = rating_repo
+        .get_for_recipe(record.id, user_id)
+        .context("failed to get rating")?;
+    let avg = rating_repo
+        .average_for_recipe(record.id)
+        .context("failed to compute average")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            #[derive(Serialize)]
+            struct RatingOut {
+                recipe: String,
+                your_score: Option<i32>,
+                average: Option<f64>,
+            }
+            let out = RatingOut {
+                recipe: slug.to_string(),
+                your_score: rating.as_ref().map(|r| r.score),
+                average: avg,
+            };
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            if let Some(r) = rating {
+                let stars = "★".repeat(r.score as usize) + &"☆".repeat(5 - r.score as usize);
+                println!("Your rating for '{}': {stars}", record.title);
+                if let Some(a) = avg {
+                    println!("Average rating: {a:.1}/5");
+                }
+            } else {
+                println!(
+                    "No rating for '{}'. Use `fond rate {} <1-5>` to rate.",
+                    record.title, slug
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_scoreboard(
+    paths: &FondPaths,
+    since: Option<&str>,
+    limit: usize,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let db = open_db(paths)?;
+    let sb_repo = fond_store::ScoreboardRepository::new(&db);
+
+    let scoreboard = sb_repo
+        .scoreboard(limit, since)
+        .context("failed to build scoreboard")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&scoreboard)?);
+        }
+        OutputFormat::Table => {
+            print_scoreboard(&scoreboard, since);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_scoreboard(sb: &fond_store::Scoreboard, since: Option<&str>) {
+    let period = since.map(|s| format!(" (since {s})")).unwrap_or_default();
+
+    // Most Cooked
+    println!("🍳 Most Cooked{period}\n");
+    if sb.most_cooked.is_empty() {
+        println!("  No cook logs yet.\n");
+    } else {
+        let mut table = Table::new();
+        table.set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(vec!["#", "Recipe", "Times Cooked"]);
+        for (i, entry) in sb.most_cooked.iter().enumerate() {
+            table.add_row(vec![
+                (i + 1).to_string(),
+                entry.title.clone(),
+                entry.cook_count.to_string(),
+            ]);
+        }
+        println!("{table}\n");
+    }
+
+    // Highest Rated
+    println!("⭐ Highest Rated{period}\n");
+    if sb.highest_rated.is_empty() {
+        println!("  No ratings yet.\n");
+    } else {
+        let mut table = Table::new();
+        table.set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(vec!["#", "Recipe", "Rating", "Votes"]);
+        for (i, entry) in sb.highest_rated.iter().enumerate() {
+            let stars = format!("{:.1}/5", entry.avg_score);
+            table.add_row(vec![
+                (i + 1).to_string(),
+                entry.title.clone(),
+                stars,
+                entry.rating_count.to_string(),
+            ]);
+        }
+        println!("{table}\n");
+    }
+
+    // Recent Activity
+    println!("📋 Recent Activity{period}\n");
+    if sb.recent_activity.is_empty() {
+        println!("  No activity yet.\n");
+    } else {
+        let mut table = Table::new();
+        table.set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(vec!["When", "Recipe", "Action", "Detail"]);
+        for entry in &sb.recent_activity {
+            let when = entry.timestamp.get(..16).unwrap_or(&entry.timestamp);
+            table.add_row(vec![
+                when.to_string(),
+                entry.title.clone(),
+                entry.activity_type.clone(),
+                entry.detail.clone(),
+            ]);
+        }
+        println!("{table}\n");
     }
 }
 

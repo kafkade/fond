@@ -2097,3 +2097,277 @@ fn scale_help() {
         .stdout(predicate::str::contains("--to"))
         .stdout(predicate::str::contains("--servings"));
 }
+
+// ──────────────────────────────────────────────────────────────
+// fond note
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn note_add_and_list() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Add a note
+    fond(&tmp)
+        .args(["note", "chicken-adobo", "Used less vinegar"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Note added"));
+
+    // List notes
+    fond(&tmp)
+        .args(["note", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Used less vinegar"));
+}
+
+#[test]
+fn note_add_json() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out = fond(&tmp)
+        .args(["note", "chicken-adobo", "Great dish!", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(parsed["note"], "Great dish!");
+    assert!(parsed["id"].is_number());
+}
+
+#[test]
+fn note_delete() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Add a note and get its ID
+    let out = fond(&tmp)
+        .args(["note", "chicken-adobo", "Delete me", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let note_id = parsed["id"].as_i64().unwrap().to_string();
+
+    // Delete it
+    fond(&tmp)
+        .args(["note", "chicken-adobo", "--delete", &note_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("deleted"));
+
+    // List should be empty
+    fond(&tmp)
+        .args(["note", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No notes"));
+}
+
+#[test]
+fn note_unknown_recipe_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["note", "nonexistent", "Some text"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no recipe found"));
+}
+
+// ──────────────────────────────────────────────────────────────
+// fond rate
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn rate_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["rate", "chicken-adobo", "4"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("★★★★☆"));
+}
+
+#[test]
+fn rate_updates_on_rerate() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["rate", "chicken-adobo", "3"])
+        .assert()
+        .success();
+
+    fond(&tmp)
+        .args(["rate", "chicken-adobo", "5"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("★★★★★"));
+
+    // Show should reflect the latest
+    fond(&tmp)
+        .args(["rate", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("★★★★★"));
+}
+
+#[test]
+fn rate_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out = fond(&tmp)
+        .args(["rate", "chicken-adobo", "4", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(parsed["score"], 4);
+}
+
+#[test]
+fn rate_invalid_score_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["rate", "chicken-adobo", "0"])
+        .assert()
+        .failure();
+
+    fond(&tmp)
+        .args(["rate", "chicken-adobo", "6"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn rate_show_no_rating() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["rate", "chicken-adobo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No rating"));
+}
+
+// ──────────────────────────────────────────────────────────────
+// fond scoreboard
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn scoreboard_empty() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .arg("scoreboard")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Most Cooked"))
+        .stdout(predicate::str::contains("Highest Rated"))
+        .stdout(predicate::str::contains("Recent Activity"));
+}
+
+#[test]
+fn scoreboard_with_data() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Rate and add a note to populate scoreboard
+    fond(&tmp)
+        .args(["rate", "chicken-adobo", "5"])
+        .assert()
+        .success();
+
+    fond(&tmp)
+        .args(["note", "chicken-adobo", "Family favorite"])
+        .assert()
+        .success();
+
+    fond(&tmp)
+        .arg("scoreboard")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Chicken Adobo"))
+        .stdout(predicate::str::contains("5.0/5"));
+}
+
+#[test]
+fn scoreboard_json() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    let out = fond(&tmp)
+        .args(["scoreboard", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert!(parsed["most_cooked"].is_array());
+    assert!(parsed["highest_rated"].is_array());
+    assert!(parsed["recent_activity"].is_array());
+}
+
+#[test]
+fn scoreboard_since_filter() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["scoreboard", "--since", "2099-01-01"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No cook logs yet"))
+        .stdout(predicate::str::contains("No ratings yet"))
+        .stdout(predicate::str::contains("No activity yet"));
+}
+
+#[test]
+fn scoreboard_help() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["scoreboard", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--since"))
+        .stdout(predicate::str::contains("--limit"));
+}
