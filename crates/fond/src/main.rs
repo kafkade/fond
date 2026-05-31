@@ -209,6 +209,20 @@ enum Commands {
         #[arg(long)]
         plan: bool,
     },
+
+    /// Scale a recipe's quantities by a multiplier or target servings.
+    Scale {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+
+        /// Scale multiplier (e.g., "2x", "0.5x", "3")
+        #[arg(long, group = "scale_mode")]
+        to: Option<String>,
+
+        /// Target number of servings
+        #[arg(long, group = "scale_mode")]
+        servings: Option<u32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -347,6 +361,9 @@ fn main() -> Result<()> {
             serve_at,
             plan,
         } => cmd_cook(&paths, &slug, serve_at.as_deref(), plan, &fmt),
+        Commands::Scale { slug, to, servings } => {
+            cmd_scale(&paths, &slug, to.as_deref(), servings, &fmt)
+        }
     }
 }
 
@@ -1832,6 +1849,142 @@ fn print_timeline(sched: &fond_timeline::ScheduledTimeline) {
         println!("  Note: Some steps have unknown duration (shown as —).");
     }
     println!();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Scale
+// ═══════════════════════════════════════════════════════════════════
+
+fn cmd_scale(
+    paths: &FondPaths,
+    slug: &str,
+    to: Option<&str>,
+    servings: Option<u32>,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    use fond_core::scale::{ScaleError, ScaleFactor, parse_scale_arg, scale_recipe};
+
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+
+    let record = repo
+        .get_recipe_by_slug(slug)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no recipe found with slug '{slug}' — run `fond list` to see available recipes")
+        })?;
+
+    // Parse from file for full fidelity (same pattern as cmd_view)
+    let dir = recipes_dir(paths);
+    let file_path = dir.join(&record.file_path);
+
+    let content = if file_path.exists() {
+        std::fs::read_to_string(&file_path).context("failed to read recipe file")?
+    } else if !record.raw_source.is_empty() {
+        record.raw_source.clone()
+    } else {
+        anyhow::bail!(
+            "recipe file not found: {} — run `fond reindex` to repair",
+            record.file_path
+        );
+    };
+
+    let recipe = fond_domain::parse_cook(&content, slug)
+        .map_err(|e| anyhow::anyhow!("failed to parse recipe: {e}"))?;
+
+    // Determine scale factor
+    let factor = match (to, servings) {
+        (Some(to_str), None) => {
+            let multiplier = parse_scale_arg(to_str).with_context(|| {
+                format!("invalid scale factor '{to_str}' — use a number like '2x' or '0.5'")
+            })?;
+            ScaleFactor::Multiplier(multiplier)
+        }
+        (None, Some(s)) => ScaleFactor::ToServings(s),
+        (None, None) => {
+            anyhow::bail!("specify either --to <multiplier> or --servings <count>");
+        }
+        (Some(_), Some(_)) => {
+            // clap's group should prevent this, but handle gracefully
+            anyhow::bail!("cannot use both --to and --servings at the same time");
+        }
+    };
+
+    let scaled = scale_recipe(&recipe, factor).map_err(|e| match e {
+        ScaleError::NoServingsMetadata => anyhow::anyhow!("{e}"),
+        ScaleError::UnparseableServings(_) => anyhow::anyhow!("{e}"),
+        ScaleError::InvalidFactor(_) => anyhow::anyhow!("{e}"),
+        ScaleError::InvalidServings(_) => anyhow::anyhow!("{e}"),
+    })?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&scaled)?);
+        }
+        OutputFormat::Table => {
+            print_scaled_recipe(&scaled);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_scaled_recipe(scaled: &fond_core::scale::ScaledRecipe) {
+    println!(
+        "# {} (×{})",
+        scaled.title,
+        format_scale(scaled.scale_factor)
+    );
+
+    if let Some(ref orig) = scaled.original_servings {
+        if let Some(ref target) = scaled.scaled_servings {
+            println!("Servings: {orig} → {target}");
+        } else {
+            println!("Servings: {orig}");
+        }
+    }
+
+    let mut timing = Vec::new();
+    if let Some(ref t) = scaled.prep_time {
+        timing.push(format!("Prep: {t}"));
+    }
+    if let Some(ref t) = scaled.cook_time {
+        timing.push(format!("Cook: {t}"));
+    }
+    if let Some(ref t) = scaled.total_time {
+        timing.push(format!("Total: {t}"));
+    }
+    if !timing.is_empty() {
+        println!("{} (times unchanged)", timing.join("  "));
+    }
+
+    println!("\n## Scaled Ingredients\n");
+    for ing in &scaled.ingredients {
+        let qty = match (&ing.scaled_quantity, &ing.unit) {
+            (Some(q), Some(u)) => format!("{q} {u} "),
+            (Some(q), None) => format!("{q} "),
+            _ => String::new(),
+        };
+        let marker = if ing.warning.is_some() { " ⚠" } else { "" };
+        println!("  - {qty}{}{marker}", ing.name);
+    }
+
+    if !scaled.warnings.is_empty() {
+        println!("\n## Scaling Warnings\n");
+        for w in &scaled.warnings {
+            println!("  ⚠ {}: {}", w.ingredient, w.message);
+        }
+    }
+
+    println!();
+}
+
+fn format_scale(factor: f64) -> String {
+    if (factor - factor.round()).abs() < 0.01 {
+        format!("{}", factor.round() as u32)
+    } else {
+        format!("{factor:.1}")
+    }
 }
 
 fn cmd_import_paprika(

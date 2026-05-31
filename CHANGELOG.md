@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cook log persistence: cooking sessions are recorded with start/end time, steps completed, and total steps (V004 migration)
 - `fond-timeline` crate: DAG model for recipe steps with task type classification (active/passive × prep/cook/rest), duration extraction from timer annotations and heuristic text parsing, and backward scheduling via reverse topological sort
 - Due diligence: ingredient dataset sourcing review (USDA, Open Food Facts, FoodOn, CulinaryDB)
+- Recipe scaling: `fond scale <slug> --to 2x` or `--servings 8` with linear quantity math, human-friendly fraction formatting, and non-linear warnings for leavening, salt, spices, and thickeners
 
 ## [0.3.0] - 2026-05-29
 

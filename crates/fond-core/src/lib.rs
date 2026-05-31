@@ -5,4 +5,8 @@
 //! network access are provided via trait implementations in
 //! downstream crates.
 
+pub mod ingredient_class;
+pub mod quantity;
+pub mod scale;
+
 pub use fond_domain::*;

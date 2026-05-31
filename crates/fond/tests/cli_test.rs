@@ -1934,3 +1934,166 @@ fn cook_help_shows_cook_command() {
         .stdout(predicate::str::contains("--serve-at"))
         .stdout(predicate::str::contains("--plan"));
 }
+
+// ──────────────────────────────────────────────────────────────
+// fond scale
+// ──────────────────────────────────────────────────────────────
+
+/// A recipe with diverse ingredient types for scaling tests.
+const SCALING_RECIPE: &str = "\
+---
+title: Scaling Test
+servings: 4
+---
+
+Mix @flour{2 cups} and @baking powder{1 tsp} in a bowl.
+
+Add @butter{1/2 cup} and @salt{1/4 tsp} to the mixture.
+
+Stir in @milk{1 cup} and @vanilla extract{1 tsp}.
+";
+
+#[test]
+fn scale_to_multiplier() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "2x"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("×2"))
+        .stdout(predicate::str::contains("4 cups")) // flour scaled
+        .stdout(predicate::str::contains("1 cup")) // butter scaled
+        .stdout(predicate::str::contains("2 cup")); // milk scaled
+}
+
+#[test]
+fn scale_to_servings() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "scaling-test", "--servings", "8"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("4 → 8")) // servings display
+        .stdout(predicate::str::contains("4 cups")); // flour doubled
+}
+
+#[test]
+fn scale_shows_warnings() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "3x"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Scaling Warnings"))
+        .stdout(predicate::str::contains("baking powder"))
+        .stdout(predicate::str::contains("salt"))
+        .stdout(predicate::str::contains("vanilla extract"));
+}
+
+#[test]
+fn scale_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out = fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "2", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(parsed["scale_factor"], 2.0);
+    assert_eq!(parsed["title"], "Scaling Test");
+    assert!(parsed["ingredients"].is_array());
+    assert!(parsed["warnings"].is_array());
+}
+
+#[test]
+fn scale_no_factor_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "scaling-test"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn scale_unknown_recipe_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "nonexistent", "--to", "2x"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no recipe found"));
+}
+
+#[test]
+fn scale_servings_without_metadata_fails() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    // Recipe without servings metadata
+    let no_servings = "\
+---
+title: No Servings
+---
+
+Add @flour{1 cup}.
+";
+    write_fixture(&tmp, "no-servings.cook", no_servings);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "no-servings", "--servings", "8"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no servings metadata"));
+}
+
+#[test]
+fn scale_half() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "0.5x"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 cup")) // flour halved
+        .stdout(predicate::str::contains("1/4 cup")); // butter halved
+}
+
+#[test]
+fn scale_help() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["scale", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--to"))
+        .stdout(predicate::str::contains("--servings"));
+}
