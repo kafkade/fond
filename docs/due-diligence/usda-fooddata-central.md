@@ -89,7 +89,7 @@ Items with these terms in the description are excluded:
 - `babyfood`, `baby food`, `infant formula`
 - `school lunch`, `hospital`
 - `supplement`, `nutrition bar`, `protein bar`, `energy bar`, `meal replacement`
-- `military`, `mre `, `usda commodity`
+- `military`, `mre`, `usda commodity`
 - `not further specified`
 
 ### Foundation Foods data_type filtering
@@ -154,6 +154,7 @@ For reference:
 - Adding 169 KB (<1% of a typical binary) is negligible
 
 Alternatives for delivery:
+
 - **`include_bytes!` + gzip decompression**: Simplest, ~169 KB binary increase
 - **SQLite load at `fond init`**: Parse CSV into `nutrition_facts` table at
   initialization time
