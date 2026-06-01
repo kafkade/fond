@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- USDA FoodData Central nutrition subset: 7,108 common cooking ingredients with per-100g macros (kcal, protein, fat, carbs, fiber, sugar, sodium) for future informational nutrition estimates
+- Due diligence: USDA FoodData Central download, subsetting methodology, license verification (public domain), and binary embedding size assessment (169 KB compressed)
 - Paprika import: `fond import paprika <path>` ingests `.paprikarecipes` / `.paprikarecipe` archives into `.cook` files with ingredient parsing, section headers, and provenance metadata
 - URL import: `fond import url <url>` extracts recipes from any schema.org/JSON-LD page with HTML fallback, `--dry-run` preview, and URL dedup
 - Pantry management: `fond pantry add|rm|list|check` tracks ingredient presence with fuzzy matching and per-recipe coverage %

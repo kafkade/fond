@@ -21,3 +21,6 @@ photos/
 
 # Environment
 .env
+
+# USDA raw downloads (large ZIPs, regenerable via data/scripts/subset_usda.py)
+data/usda/raw/
