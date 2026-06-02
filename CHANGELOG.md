@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Family profiles: `fond user add|list|show|rm|set|update` manages household members with allergens and dietary preferences
+- Allergen safety: `fond list --exclude-allergens` and `fond search --exclude-allergens` filter out recipes containing the active user's allergens, with substring matching against ~90 ingredient→allergen mappings
+- Active user switching: `fond user set <name>` selects the current user for notes, ratings, cook logs, and allergen checks
+- Meal planning: `fond plan add|show|rm|list|clear|delete` organizes recipes into named weekly meal plans with `day:meal=recipe-slug` assignment format
+- Consolidated grocery lists: `fond grocery from-plan <name>` aggregates ingredients across all recipes in a meal plan, combining duplicates by name+unit, with pantry subtraction and category grouping
 - USDA FoodData Central nutrition subset: 7,108 common cooking ingredients with per-100g macros (kcal, protein, fat, carbs, fiber, sugar, sodium) for future informational nutrition estimates
 - Due diligence: USDA FoodData Central download, subsetting methodology, license verification (public domain), and binary embedding size assessment (169 KB compressed)
 - Paprika import: `fond import paprika <path>` ingests `.paprikarecipes` / `.paprikarecipe` archives into `.cook` files with ingredient parsing, section headers, and provenance metadata

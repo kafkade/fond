@@ -102,6 +102,10 @@ enum Commands {
         /// Filter by source (substring match)
         #[arg(long)]
         source: Option<String>,
+
+        /// Exclude recipes containing the current user's allergens
+        #[arg(long)]
+        exclude_allergens: bool,
     },
 
     /// Search recipes by keyword.
@@ -124,6 +128,10 @@ enum Commands {
         /// Filter by source (substring match)
         #[arg(long)]
         source: Option<String>,
+
+        /// Exclude recipes containing the current user's allergens
+        #[arg(long)]
+        exclude_allergens: bool,
     },
 
     /// Manage recipe tags.
@@ -256,6 +264,74 @@ enum Commands {
         #[arg(long, default_value = "10")]
         limit: usize,
     },
+
+    /// Manage family member profiles (users, dietary prefs, allergens).
+    User {
+        #[command(subcommand)]
+        action: UserAction,
+    },
+
+    /// Create and manage meal plans.
+    Plan {
+        #[command(subcommand)]
+        action: PlanAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum UserAction {
+    /// Add a new family member profile.
+    Add {
+        /// Name of the user
+        name: String,
+
+        /// Allergens (comma-separated, e.g., "peanut,dairy")
+        #[arg(long)]
+        allergen: Option<String>,
+
+        /// Dietary preferences (comma-separated, e.g., "vegetarian,gluten-free")
+        #[arg(long)]
+        diet: Option<String>,
+    },
+
+    /// List all family member profiles.
+    List,
+
+    /// Show details for a specific family member.
+    Show {
+        /// Name of the user
+        name: String,
+    },
+
+    /// Remove a family member profile (soft-delete, preserves data).
+    Rm {
+        /// Name of the user to remove
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
+
+    /// Switch the active user for commands that scope by user.
+    Set {
+        /// Name of the user to switch to
+        name: String,
+    },
+
+    /// Update allergens or dietary preferences for a user.
+    Update {
+        /// Name of the user to update
+        name: String,
+
+        /// Allergens (comma-separated, replaces existing)
+        #[arg(long)]
+        allergen: Option<String>,
+
+        /// Dietary preferences (comma-separated, replaces existing)
+        #[arg(long)]
+        diet: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -300,6 +376,75 @@ enum GroceryAction {
         /// Include items already in pantry (marked as covered)
         #[arg(long)]
         include_pantry: bool,
+    },
+
+    /// Generate a consolidated shopping list from a meal plan.
+    ///
+    /// Combines ingredients across all recipes in the plan,
+    /// subtracts pantry items, and groups by aisle/category.
+    FromPlan {
+        /// Plan name (e.g., "week")
+        plan: String,
+
+        /// Include items already in pantry (marked as covered)
+        #[arg(long)]
+        include_pantry: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlanAction {
+    /// Add a recipe to a meal plan.
+    ///
+    /// Use `day:meal=recipe-slug` format (e.g., `monday:dinner=chicken-adobo`).
+    /// Day can be a weekday name (resolved to current week) or ISO date (YYYY-MM-DD).
+    /// Meal must be: breakfast, lunch, dinner, or snack.
+    Add {
+        /// Plan name (e.g., "week")
+        plan: String,
+
+        /// Assignment in `day:meal=recipe-slug` format
+        assignment: String,
+    },
+
+    /// Show a meal plan.
+    Show {
+        /// Plan name (e.g., "week")
+        plan: String,
+    },
+
+    /// Remove a recipe from a meal plan.
+    ///
+    /// Use the same `day:meal=recipe-slug` format as `add`.
+    Rm {
+        /// Plan name (e.g., "week")
+        plan: String,
+
+        /// Assignment to remove in `day:meal=recipe-slug` format
+        assignment: String,
+    },
+
+    /// List all meal plans.
+    List,
+
+    /// Clear all entries from a meal plan (keep the plan itself).
+    Clear {
+        /// Plan name (e.g., "week")
+        plan: String,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
+
+    /// Delete a meal plan and all its entries.
+    Delete {
+        /// Plan name (e.g., "week")
+        plan: String,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 
@@ -346,14 +491,33 @@ fn main() -> Result<()> {
             max_time,
             cuisine,
             source,
-        } => cmd_list(&paths, &fmt, tag, max_time, cuisine, source),
+            exclude_allergens,
+        } => cmd_list(
+            &paths,
+            &fmt,
+            tag,
+            max_time,
+            cuisine,
+            source,
+            exclude_allergens,
+        ),
         Commands::Search {
             query,
             tag,
             max_time,
             cuisine,
             source,
-        } => cmd_search(&paths, &query, &fmt, tag, max_time, cuisine, source),
+            exclude_allergens,
+        } => cmd_search(
+            &paths,
+            &query,
+            &fmt,
+            tag,
+            max_time,
+            cuisine,
+            source,
+            exclude_allergens,
+        ),
         Commands::Tag {
             slug,
             add,
@@ -373,6 +537,10 @@ fn main() -> Result<()> {
                 slug,
                 include_pantry,
             } => cmd_grocery_from_recipe(&paths, &slug, include_pantry, &fmt),
+            GroceryAction::FromPlan {
+                plan,
+                include_pantry,
+            } => cmd_grocery_from_plan(&paths, &plan, include_pantry, &fmt),
         },
         Commands::Import { source } => match source {
             ImportSource::Paprika { path, dry_run } => {
@@ -402,6 +570,30 @@ fn main() -> Result<()> {
         Commands::Scoreboard { since, limit } => {
             cmd_scoreboard(&paths, since.as_deref(), limit, &fmt)
         }
+        Commands::User { action } => match action {
+            UserAction::Add {
+                name,
+                allergen,
+                diet,
+            } => cmd_user_add(&paths, &name, allergen.as_deref(), diet.as_deref(), &fmt),
+            UserAction::List => cmd_user_list(&paths, &fmt),
+            UserAction::Show { name } => cmd_user_show(&paths, &name, &fmt),
+            UserAction::Rm { name, yes } => cmd_user_rm(&paths, &name, yes, &fmt),
+            UserAction::Set { name } => cmd_user_set(&paths, &name, &fmt),
+            UserAction::Update {
+                name,
+                allergen,
+                diet,
+            } => cmd_user_update(&paths, &name, allergen.as_deref(), diet.as_deref(), &fmt),
+        },
+        Commands::Plan { action } => match action {
+            PlanAction::Add { plan, assignment } => cmd_plan_add(&paths, &plan, &assignment, &fmt),
+            PlanAction::Show { plan } => cmd_plan_show(&paths, &plan, &fmt),
+            PlanAction::Rm { plan, assignment } => cmd_plan_rm(&paths, &plan, &assignment, &fmt),
+            PlanAction::List => cmd_plan_list(&paths, &fmt),
+            PlanAction::Clear { plan, yes } => cmd_plan_clear(&paths, &plan, yes, &fmt),
+            PlanAction::Delete { plan, yes } => cmd_plan_delete(&paths, &plan, yes, &fmt),
+        },
     }
 }
 
@@ -706,10 +898,53 @@ fn cmd_view(paths: &FondPaths, slug: &str, fmt: &OutputFormat) -> Result<()> {
 
     match fmt {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&recipe)?);
+            // Include allergen flags in JSON output
+            let user_repo = fond_store::UserRepository::new(&db);
+            user_repo.seed_ingredient_allergens().ok();
+            let flags = user_repo
+                .check_recipe_allergens(record.id)
+                .unwrap_or_default();
+
+            #[derive(Serialize)]
+            struct ViewOutput {
+                #[serde(flatten)]
+                recipe: fond_domain::Recipe,
+                #[serde(skip_serializing_if = "Vec::is_empty")]
+                allergen_flags: Vec<fond_store::AllergenFlag>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                allergen_disclaimer: Option<String>,
+            }
+            let has_flags = !flags.is_empty();
+            let out = ViewOutput {
+                allergen_flags: flags,
+                allergen_disclaimer: if has_flags {
+                    Some(fond_domain::ALLERGEN_DISCLAIMER.to_string())
+                } else {
+                    None
+                },
+                recipe,
+            };
+            println!("{}", serde_json::to_string_pretty(&out)?);
         }
         OutputFormat::Table => {
             print_recipe_human(&recipe);
+
+            // Show allergen warnings
+            let user_repo = fond_store::UserRepository::new(&db);
+            user_repo.seed_ingredient_allergens().ok();
+
+            if let Some(user_id) = default_user_id(&db) {
+                let flags = user_repo
+                    .check_recipe_allergens_for_user(record.id, user_id)
+                    .unwrap_or_default();
+                if !flags.is_empty() {
+                    println!("\n⚠ Allergen warnings:");
+                    for flag in &flags {
+                        println!("  • {} → {}", flag.ingredient, flag.allergen);
+                    }
+                    println!("\n{}", fond_domain::ALLERGEN_DISCLAIMER);
+                }
+            }
         }
     }
 
@@ -774,14 +1009,42 @@ fn cmd_list(
     max_time: Option<u32>,
     cuisine: Option<String>,
     source: Option<String>,
+    exclude_allergens: bool,
 ) -> Result<()> {
     let db = open_db(paths)?;
     let repo = RecipeRepository::new(&db);
 
     let filter = build_cli_filter(tags, max_time, cuisine, source);
-    let recipes = repo
+    let mut recipes = repo
         .list_recipes_filtered(&filter)
         .context("failed to list recipes")?;
+
+    // Filter out recipes containing the current user's allergens
+    if exclude_allergens {
+        let user_repo = fond_store::UserRepository::new(&db);
+        user_repo
+            .seed_ingredient_allergens()
+            .context("failed to seed allergen data")?;
+
+        if let Some(user_id) = default_user_id(&db) {
+            let flagged = user_repo
+                .filter_recipes_excluding_allergens(user_id)
+                .context("failed to check allergens")?;
+            let before = recipes.len();
+            recipes.retain(|r| !flagged.contains(&r.id));
+            let excluded = before - recipes.len();
+
+            if excluded > 0
+                && let OutputFormat::Table = fmt
+            {
+                eprintln!(
+                    "ℹ Excluded {excluded} recipe(s) containing your allergens. \
+                     {}\n",
+                    fond_domain::ALLERGEN_DISCLAIMER
+                );
+            }
+        }
+    }
 
     if recipes.is_empty() {
         match fmt {
@@ -832,6 +1095,7 @@ fn cmd_list(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_search(
     paths: &FondPaths,
     query: &str,
@@ -840,6 +1104,7 @@ fn cmd_search(
     max_time: Option<u32>,
     cuisine: Option<String>,
     source: Option<String>,
+    exclude_allergens: bool,
 ) -> Result<()> {
     let db = open_db(paths)?;
     let repo = RecipeRepository::new(&db);
@@ -856,9 +1121,36 @@ fn cmd_search(
         return Ok(());
     }
 
-    let results = repo
+    let mut results = repo
         .search_filtered(&escaped_query, &filter)
         .context("search failed")?;
+
+    // Filter out recipes containing the current user's allergens
+    if exclude_allergens {
+        let user_repo = fond_store::UserRepository::new(&db);
+        user_repo
+            .seed_ingredient_allergens()
+            .context("failed to seed allergen data")?;
+
+        if let Some(user_id) = default_user_id(&db) {
+            let flagged = user_repo
+                .filter_recipes_excluding_allergens(user_id)
+                .context("failed to check allergens")?;
+            let before = results.len();
+            results.retain(|r| !flagged.contains(&r.recipe_id));
+            let excluded = before - results.len();
+
+            if excluded > 0
+                && let OutputFormat::Table = fmt
+            {
+                eprintln!(
+                    "ℹ Excluded {excluded} result(s) containing your allergens. \
+                     {}\n",
+                    fond_domain::ALLERGEN_DISCLAIMER
+                );
+            }
+        }
+    }
 
     if results.is_empty() {
         match fmt {
@@ -2037,8 +2329,13 @@ fn format_scale(factor: f64) -> String {
 // Notes, Ratings, Scoreboard
 // ═══════════════════════════════════════════════════════════════════
 
-/// Get the default user ID (1, created by V005 migration).
+/// Get the current user ID (from app_settings, falls back to 'default' user).
 fn default_user_id(db: &FondDb) -> Option<i64> {
+    let user_repo = fond_store::UserRepository::new(db);
+    if let Ok(Some(id)) = user_repo.get_current_user_id() {
+        return Some(id);
+    }
+    // Fallback: query for the 'default' user from V005
     db.conn()
         .query_row("SELECT id FROM users WHERE name = 'default'", [], |row| {
             row.get(0)
@@ -2321,6 +2618,725 @@ fn print_scoreboard(sb: &fond_store::Scoreboard, since: Option<&str>) {
         }
         println!("{table}\n");
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// User Profiles
+// ═══════════════════════════════════════════════════════════════════
+
+/// Parse comma-separated values into a Vec of trimmed lowercase strings.
+fn parse_csv_values(input: Option<&str>) -> Vec<String> {
+    input
+        .map(|s| {
+            s.split(',')
+                .map(|v| v.trim().to_lowercase())
+                .filter(|v| !v.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cmd_user_add(
+    paths: &FondPaths,
+    name: &str,
+    allergen: Option<&str>,
+    diet: Option<&str>,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let db = open_db(paths)?;
+    let user_repo = fond_store::UserRepository::new(&db);
+
+    let allergens: Vec<String> = parse_csv_values(allergen)
+        .iter()
+        .map(|s| fond_domain::Allergen::parse(s).as_str().to_string())
+        .collect();
+    let dietary_prefs: Vec<String> = parse_csv_values(diet)
+        .iter()
+        .map(|s| fond_domain::DietaryPref::parse(s).as_str().to_string())
+        .collect();
+
+    let id = user_repo
+        .add(name, &allergens, &dietary_prefs)
+        .context("failed to create user")?;
+
+    // Seed allergen reference data on first user creation
+    user_repo
+        .seed_ingredient_allergens()
+        .context("failed to seed allergen data")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            #[derive(Serialize)]
+            struct UserAdded {
+                id: i64,
+                name: String,
+                allergens: Vec<String>,
+                dietary_prefs: Vec<String>,
+            }
+            let out = UserAdded {
+                id,
+                name: name.to_string(),
+                allergens,
+                dietary_prefs,
+            };
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Added user '{name}' (id: {id}).");
+            if !allergens.is_empty() {
+                println!("  Allergens: {}", allergens.join(", "));
+            }
+            if !dietary_prefs.is_empty() {
+                println!("  Dietary preferences: {}", dietary_prefs.join(", "));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_user_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let user_repo = fond_store::UserRepository::new(&db);
+
+    let users = user_repo.list().context("failed to list users")?;
+    let current_id = user_repo.get_current_user_id().unwrap_or(None);
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&users)?);
+        }
+        OutputFormat::Table => {
+            if users.is_empty() {
+                println!("No users. Add one with `fond user add <name>`.");
+                return Ok(());
+            }
+
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["", "Name", "Allergens", "Dietary Prefs"]);
+
+            for u in &users {
+                let marker = if Some(u.id) == current_id { "→" } else { " " };
+                let allergens = if u.allergens.is_empty() {
+                    "—".to_string()
+                } else {
+                    u.allergens.join(", ")
+                };
+                let prefs = if u.dietary_prefs.is_empty() {
+                    "—".to_string()
+                } else {
+                    u.dietary_prefs.join(", ")
+                };
+                table.add_row(vec![marker, &u.name, &allergens, &prefs]);
+            }
+
+            println!("{table}");
+            println!("\n{} user(s)", users.len());
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_user_show(paths: &FondPaths, name: &str, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let user_repo = fond_store::UserRepository::new(&db);
+
+    let user = user_repo
+        .get_by_name(name)
+        .context("database query failed")?
+        .with_context(|| format!("no user found with name '{name}'"))?;
+
+    let current_id = user_repo.get_current_user_id().unwrap_or(None);
+    let is_current = Some(user.id) == current_id;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&user)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "👤 {}{}",
+                user.name,
+                if is_current { " (active)" } else { "" }
+            );
+            println!("  Created: {}", user.created_at);
+            if user.allergens.is_empty() {
+                println!("  Allergens: (none)");
+            } else {
+                println!("  Allergens: {}", user.allergens.join(", "));
+            }
+            if user.dietary_prefs.is_empty() {
+                println!("  Dietary preferences: (none)");
+            } else {
+                println!("  Dietary preferences: {}", user.dietary_prefs.join(", "));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_user_rm(paths: &FondPaths, name: &str, yes: bool, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let user_repo = fond_store::UserRepository::new(&db);
+
+    let user = user_repo
+        .get_by_name(name)
+        .context("database query failed")?
+        .with_context(|| format!("no user found with name '{name}'"))?;
+
+    if !yes
+        && !confirm(&format!(
+            "Remove user '{name}'? (Notes, ratings, and cook logs will be preserved.)"
+        ))
+    {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let current_id = user_repo.get_current_user_id().unwrap_or(None);
+    let was_current = Some(user.id) == current_id;
+
+    user_repo
+        .deactivate(user.id)
+        .context("failed to deactivate user")?;
+
+    // If we removed the current user, reset to default
+    if was_current {
+        user_repo.set_current_user(1).ok();
+    }
+
+    match fmt {
+        OutputFormat::Json => {
+            println!(r#"{{"removed": true, "name": "{}"}}"#, name);
+        }
+        OutputFormat::Table => {
+            println!("Removed user '{name}'. Notes, ratings, and cook logs are preserved.");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_user_set(paths: &FondPaths, name: &str, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let user_repo = fond_store::UserRepository::new(&db);
+
+    let user = user_repo
+        .get_by_name(name)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no user found with name '{name}' — add them with `fond user add {name}`")
+        })?;
+
+    user_repo
+        .set_current_user(user.id)
+        .context("failed to set current user")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            #[derive(Serialize)]
+            struct SetUser {
+                current_user: String,
+                id: i64,
+            }
+            let out = SetUser {
+                current_user: user.name.clone(),
+                id: user.id,
+            };
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Switched active user to '{}'.", user.name);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_user_update(
+    paths: &FondPaths,
+    name: &str,
+    allergen: Option<&str>,
+    diet: Option<&str>,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    if allergen.is_none() && diet.is_none() {
+        anyhow::bail!("specify --allergen and/or --diet to update");
+    }
+
+    let db = open_db(paths)?;
+    let user_repo = fond_store::UserRepository::new(&db);
+
+    let user = user_repo
+        .get_by_name(name)
+        .context("database query failed")?
+        .with_context(|| format!("no user found with name '{name}'"))?;
+
+    if let Some(a) = allergen {
+        let allergens: Vec<String> = parse_csv_values(Some(a))
+            .iter()
+            .map(|s| fond_domain::Allergen::parse(s).as_str().to_string())
+            .collect();
+        user_repo
+            .set_allergens(user.id, &allergens)
+            .context("failed to update allergens")?;
+    }
+
+    if let Some(d) = diet {
+        let prefs: Vec<String> = parse_csv_values(Some(d))
+            .iter()
+            .map(|s| fond_domain::DietaryPref::parse(s).as_str().to_string())
+            .collect();
+        user_repo
+            .set_dietary_prefs(user.id, &prefs)
+            .context("failed to update dietary preferences")?;
+    }
+
+    // Show updated profile
+    let updated = user_repo.get_by_id(user.id).unwrap_or(None);
+
+    match fmt {
+        OutputFormat::Json => {
+            if let Some(u) = updated {
+                println!("{}", serde_json::to_string_pretty(&u)?);
+            }
+        }
+        OutputFormat::Table => {
+            println!("Updated user '{name}'.");
+            if let Some(u) = updated {
+                if !u.allergens.is_empty() {
+                    println!("  Allergens: {}", u.allergens.join(", "));
+                }
+                if !u.dietary_prefs.is_empty() {
+                    println!("  Dietary preferences: {}", u.dietary_prefs.join(", "));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Meal Planning
+// ═══════════════════════════════════════════════════════════════════
+
+/// Parse an assignment string like "monday:dinner=chicken-adobo".
+///
+/// Returns (day_or_date, meal, recipe_slug).
+fn parse_plan_assignment(s: &str) -> Result<(String, String, String)> {
+    // Split on '='
+    let (day_meal, recipe_slug) = s.split_once('=').with_context(|| {
+        format!(
+            "invalid assignment format '{s}' — expected day:meal=recipe-slug \
+                 (e.g., monday:dinner=chicken-adobo)"
+        )
+    })?;
+
+    let recipe_slug = recipe_slug.trim().to_string();
+    if recipe_slug.is_empty() {
+        anyhow::bail!("recipe slug cannot be empty");
+    }
+
+    // Split on ':'
+    let (day, meal) = day_meal.split_once(':').with_context(|| {
+        format!(
+            "invalid assignment format '{s}' — expected day:meal=recipe-slug \
+                 (e.g., monday:dinner=chicken-adobo)"
+        )
+    })?;
+
+    let day = day.trim().to_string();
+    let meal = meal.trim().to_lowercase();
+
+    if day.is_empty() || meal.is_empty() {
+        anyhow::bail!("invalid assignment format '{s}' — day and meal cannot be empty");
+    }
+
+    Ok((day, meal, recipe_slug))
+}
+
+/// Resolve a day string to an ISO date.
+///
+/// Accepts either a weekday name ("monday") resolved to the current week,
+/// or an ISO date ("2025-06-02") passed through.
+fn resolve_day_to_date(day: &str) -> Result<String> {
+    if fond_store::is_weekday(day) {
+        fond_store::weekday_to_date(day).context("failed to resolve weekday to date")
+    } else if day.len() == 10 && day.chars().nth(4) == Some('-') {
+        // Looks like an ISO date
+        Ok(day.to_string())
+    } else {
+        anyhow::bail!(
+            "invalid day '{}' — use a weekday name (monday-sunday) or ISO date (YYYY-MM-DD)",
+            day
+        );
+    }
+}
+
+fn cmd_plan_add(
+    paths: &FondPaths,
+    plan_name: &str,
+    assignment: &str,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let (day, meal, recipe_slug) = parse_plan_assignment(assignment)?;
+    let plan_date = resolve_day_to_date(&day)?;
+
+    let db = open_db(paths)?;
+    let plan_repo = fond_store::MealPlanRepository::new(&db);
+
+    let plan_id = plan_repo
+        .get_or_create(plan_name)
+        .context("failed to create/get plan")?;
+
+    plan_repo
+        .add_entry(plan_id, &plan_date, &meal, &recipe_slug)
+        .context("failed to add plan entry")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            #[derive(Serialize)]
+            struct PlanEntry {
+                plan: String,
+                date: String,
+                day: String,
+                meal: String,
+                recipe: String,
+            }
+            let out = PlanEntry {
+                plan: plan_name.to_string(),
+                date: plan_date.clone(),
+                day,
+                meal: meal.clone(),
+                recipe: recipe_slug.clone(),
+            };
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "Added {} {} → {} ({})",
+                plan_date, meal, recipe_slug, plan_name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_plan_show(paths: &FondPaths, plan_name: &str, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let plan_repo = fond_store::MealPlanRepository::new(&db);
+
+    let plan = plan_repo
+        .get_plan(plan_name)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no plan found with name '{plan_name}' — create one with `fond plan add {plan_name} day:meal=recipe`")
+        })?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+        }
+        OutputFormat::Table => {
+            println!("📅 Meal Plan: {}\n", plan.name);
+
+            if plan.entries.is_empty() {
+                println!(
+                    "  (empty — add entries with `fond plan add {} day:meal=recipe`)",
+                    plan_name
+                );
+                return Ok(());
+            }
+
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["Date", "Meal", "Recipe"]);
+
+            let mut current_date = String::new();
+            for entry in &plan.entries {
+                let date_display = if entry.plan_date != current_date {
+                    current_date = entry.plan_date.clone();
+                    // Try to add weekday name
+                    format_plan_date(&entry.plan_date)
+                } else {
+                    String::new()
+                };
+
+                let recipe_display = entry.recipe_title.as_deref().unwrap_or(&entry.recipe_slug);
+
+                table.add_row(vec![
+                    date_display,
+                    entry.meal.clone(),
+                    recipe_display.to_string(),
+                ]);
+            }
+
+            println!("{table}");
+            println!("\n{} meal(s) planned", plan.entries.len());
+        }
+    }
+
+    Ok(())
+}
+
+/// Format a plan date for display, adding the weekday name.
+fn format_plan_date(date_str: &str) -> String {
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+        let weekday = date.format("%A").to_string();
+        format!("{weekday} ({date_str})")
+    } else {
+        date_str.to_string()
+    }
+}
+
+fn cmd_plan_rm(
+    paths: &FondPaths,
+    plan_name: &str,
+    assignment: &str,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let (day, meal, recipe_slug) = parse_plan_assignment(assignment)?;
+    let plan_date = resolve_day_to_date(&day)?;
+
+    let db = open_db(paths)?;
+    let plan_repo = fond_store::MealPlanRepository::new(&db);
+
+    let plan = plan_repo
+        .get_plan(plan_name)
+        .context("database query failed")?
+        .with_context(|| format!("no plan found with name '{plan_name}'"))?;
+
+    let removed = plan_repo
+        .remove_entry(plan.id, &plan_date, &meal, &recipe_slug)
+        .context("failed to remove entry")?;
+
+    if !removed {
+        anyhow::bail!(
+            "no matching entry found for {} {} {} in plan '{}'",
+            plan_date,
+            meal,
+            recipe_slug,
+            plan_name
+        );
+    }
+
+    match fmt {
+        OutputFormat::Json => {
+            println!(
+                r#"{{"removed": true, "plan": "{}", "date": "{}", "meal": "{}", "recipe": "{}"}}"#,
+                plan_name, plan_date, meal, recipe_slug
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "Removed {} {} ← {} ({})",
+                plan_date, meal, recipe_slug, plan_name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_plan_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let plan_repo = fond_store::MealPlanRepository::new(&db);
+
+    let plans = plan_repo.list_plans().context("failed to list plans")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&plans)?);
+        }
+        OutputFormat::Table => {
+            if plans.is_empty() {
+                println!("No meal plans. Create one with `fond plan add <name> day:meal=recipe`.");
+                return Ok(());
+            }
+
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["Name", "Meals", "Created"]);
+
+            for p in &plans {
+                table.add_row(vec![&p.name, &p.entry_count.to_string(), &p.created_at]);
+            }
+
+            println!("{table}");
+            println!("\n{} plan(s)", plans.len());
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_plan_clear(paths: &FondPaths, plan_name: &str, yes: bool, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let plan_repo = fond_store::MealPlanRepository::new(&db);
+
+    if !yes && !confirm(&format!("Clear all entries from plan '{plan_name}'?")) {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let cleared = plan_repo
+        .clear_plan(plan_name)
+        .context("failed to clear plan")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!(
+                r#"{{"cleared": true, "plan": "{}", "entries_removed": {}}}"#,
+                plan_name, cleared
+            );
+        }
+        OutputFormat::Table => {
+            println!("Cleared {cleared} entry(ies) from plan '{plan_name}'.");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_plan_delete(
+    paths: &FondPaths,
+    plan_name: &str,
+    yes: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let db = open_db(paths)?;
+    let plan_repo = fond_store::MealPlanRepository::new(&db);
+
+    if !yes && !confirm(&format!("Delete plan '{plan_name}' and all its entries?")) {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let deleted = plan_repo
+        .delete_plan(plan_name)
+        .context("failed to delete plan")?;
+
+    if !deleted {
+        anyhow::bail!("no plan found with name '{plan_name}'");
+    }
+
+    match fmt {
+        OutputFormat::Json => {
+            println!(r#"{{"deleted": true, "plan": "{}"}}"#, plan_name);
+        }
+        OutputFormat::Table => {
+            println!("Deleted plan '{plan_name}'.");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_grocery_from_plan(
+    paths: &FondPaths,
+    plan_name: &str,
+    include_pantry: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let grocery = fond_store::GroceryRepository::new(&db);
+
+    let list = grocery
+        .from_plan(plan_name, include_pantry)
+        .context("failed to generate consolidated grocery list")?;
+
+    let Some(list) = list else {
+        anyhow::bail!("plan not found: '{plan_name}'");
+    };
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&list)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "🛒 Consolidated grocery list for plan: {}\n",
+                list.plan_name
+            );
+
+            if list.recipe_count == 0 {
+                println!(
+                    "  Plan is empty — add entries with `fond plan add {} day:meal=recipe`.",
+                    plan_name
+                );
+                return Ok(());
+            }
+
+            println!(
+                "  {} recipe(s): {}",
+                list.recipe_count,
+                list.recipe_slugs.join(", ")
+            );
+            println!(
+                "  {} total ingredient(s), {} consolidated, {} in pantry, {} to buy\n",
+                list.total_ingredients,
+                list.consolidated_items,
+                list.pantry_covered_count,
+                list.items_to_buy
+            );
+
+            if list.items.is_empty() {
+                if list.pantry_covered_count > 0 {
+                    println!("Everything is already in your pantry! 🎉");
+                } else {
+                    println!("No ingredients found in the planned recipes.");
+                }
+            } else {
+                let mut current_category = "";
+
+                let mut table = Table::new();
+                table.set_content_arrangement(ContentArrangement::Dynamic);
+                table.set_header(vec!["", "Qty", "Unit", "Ingredient", "For", "Note"]);
+
+                for item in &list.items {
+                    if item.category != current_category {
+                        current_category = &item.category;
+                        table.add_row(vec![
+                            format!("── {current_category} ──"),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                        ]);
+                    }
+
+                    let status = if item.pantry_covered {
+                        "\u{2713}".to_string()
+                    } else if item.optional {
+                        "?".to_string()
+                    } else {
+                        "\u{2717}".to_string()
+                    };
+
+                    let qty = item.quantity.as_deref().unwrap_or("").to_string();
+                    let unit = item.unit.as_deref().unwrap_or("").to_string();
+                    let note = item.note.as_deref().unwrap_or("").to_string();
+                    let from = item.from_recipes.join(", ");
+
+                    table.add_row(vec![status, qty, unit, item.name.clone(), from, note]);
+                }
+
+                println!("{table}");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn cmd_import_paprika(
