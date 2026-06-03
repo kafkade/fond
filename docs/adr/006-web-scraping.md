@@ -50,6 +50,7 @@ Failure mode F1 from the roadmap has been confirmed: both NYT Cooking and Americ
 **Consequence**: fond does not and will not build authenticated scrapers for these services. The schema.org import path (`fond import url`) remains available for any publicly accessible page with structured data. Users who have saved NYT/ATK recipes in Paprika can import them via `fond import paprika`.
 
 The `fond-scrape` crate has been implemented with:
+
 - `ScrapeClient`: reqwest-based HTTP client with cookie jar, replacing the previous `curl` subprocess
 - `CredentialStore`: OS keychain integration via `keyring` for future permitted auth sources
 - No site-specific authenticated parsers for NYT or ATK

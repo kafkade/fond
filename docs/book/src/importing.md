@@ -85,10 +85,12 @@ fond import url https://example.com/recipe --dry-run
 fond **does not** provide authenticated importers for NYT Cooking or America's Test Kitchen (Cook's Illustrated, Cook's Country). Both services explicitly prohibit automated access and scraping in their Terms of Service.
 
 **What works:**
+
 - Public (non-paywalled) recipe pages with schema.org markup can be imported via `fond import url`
 - If you use Paprika, you can save NYT/ATK recipes using Paprika's built-in browser clipper, then import them via `fond import paprika`
 
 **What fond will not do:**
+
 - Automate login to subscription services
 - Circumvent paywalls or access controls
 - Bulk-download recipes from these services
