@@ -14,7 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Active user switching: `fond user set <name>` selects the current user for notes, ratings, cook logs, and allergen checks
 - Meal planning: `fond plan add|show|rm|list|clear|delete` organizes recipes into named weekly meal plans with `day:meal=recipe-slug` assignment format
 - Consolidated grocery lists: `fond grocery from-plan <name>` aggregates ingredients across all recipes in a meal plan, combining duplicates by name+unit, with pantry subtraction and category grouping
+- `fond-scrape` crate: isolated HTTP client (`reqwest`-based) with cookie jar support and OS keychain credential storage (`keyring`) for future authenticated import sources
 - USDA FoodData Central nutrition subset: 7,108 common cooking ingredients with per-100g macros (kcal, protein, fat, carbs, fiber, sugar, sodium) for future informational nutrition estimates
+
+### Changed
+
+- `fond import url` now uses `fond-scrape`'s built-in HTTP client instead of shelling out to `curl`, removing the external dependency
+
+### Fixed
+
+- Documented NYT Cooking and Cook's Illustrated/ATK scraping limitation: both services prohibit automated access in their ToS; Paprika bridge is the recommended import path
 - Due diligence: USDA FoodData Central download, subsetting methodology, license verification (public domain), and binary embedding size assessment (169 KB compressed)
 - Paprika import: `fond import paprika <path>` ingests `.paprikarecipes` / `.paprikarecipe` archives into `.cook` files with ingredient parsing, section headers, and provenance metadata
 - URL import: `fond import url <url>` extracts recipes from any schema.org/JSON-LD page with HTML fallback, `--dry-run` preview, and URL dedup

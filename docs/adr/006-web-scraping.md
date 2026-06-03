@@ -1,7 +1,8 @@
 # ADR-006: Web Scraping Architecture — Isolated, Schema.org-First Import
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2025-07-13
+**Updated**: 2026-06-02 — F1 validated; NYT/ATK ToS prohibit automated access
 **Decision**: Put website import logic in an isolated `fond-scrape` crate, prefer schema.org/JSON-LD extraction, use site-specific fallbacks only when needed, and require the user's own locally stored credentials for authenticated sites.
 
 ## Context
@@ -41,3 +42,15 @@ The import flow is **schema.org-first**: if structured recipe data is present, u
 - Strong upside: legal and ethical boundaries are explicit in the architecture rather than being left to ad hoc implementation choices.
 - Tradeoff: authenticated importers remain fragile and may break when sites change markup or policies.
 - Tradeoff: some high-value sources may remain unsupported if their terms or technical behavior make automation unacceptable.
+
+## Status Update — F1 Validated (2026-06-02)
+
+Failure mode F1 from the roadmap has been confirmed: both NYT Cooking and America's Test Kitchen (Cook's Illustrated, Cook's Country) explicitly prohibit automated access in their Terms of Service. See [`docs/due-diligence/nyt-atk-scraping-review.md`](../due-diligence/nyt-atk-scraping-review.md) for the full analysis.
+
+**Consequence**: fond does not and will not build authenticated scrapers for these services. The schema.org import path (`fond import url`) remains available for any publicly accessible page with structured data. Users who have saved NYT/ATK recipes in Paprika can import them via `fond import paprika`.
+
+The `fond-scrape` crate has been implemented with:
+
+- `ScrapeClient`: reqwest-based HTTP client with cookie jar, replacing the previous `curl` subprocess
+- `CredentialStore`: OS keychain integration via `keyring` for future permitted auth sources
+- No site-specific authenticated parsers for NYT or ATK
