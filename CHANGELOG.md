@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Consolidated grocery lists: `fond grocery from-plan <name>` aggregates ingredients across all recipes in a meal plan, combining duplicates by name+unit, with pantry subtraction and category grouping
 - `fond-scrape` crate: isolated HTTP client (`reqwest`-based) with cookie jar support and OS keychain credential storage (`keyring`) for future authenticated import sources
 - USDA FoodData Central nutrition subset: 7,108 common cooking ingredients with per-100g macros (kcal, protein, fat, carbs, fiber, sugar, sodium) for future informational nutrition estimates
+- Nutrition estimates: `fond nutrition <slug>` shows per-ingredient and total estimated nutrition facts using USDA data, with coverage %, confidence scoring, and aggressive rounding to prevent false precision
 
 ### Changed
 

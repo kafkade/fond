@@ -395,7 +395,7 @@ fn categorize_ingredient(name: &str) -> &'static str {
 ///
 /// Handles integers, decimals, ASCII fractions (1/2), mixed fractions
 /// (1 1/2), and common Unicode fractions (½, ¼, ¾, ⅓, ⅔, ⅛).
-fn parse_quantity(s: &str) -> Option<f64> {
+pub(crate) fn parse_quantity(s: &str) -> Option<f64> {
     let s = s.trim();
     if s.is_empty() {
         return None;
