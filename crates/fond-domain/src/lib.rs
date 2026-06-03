@@ -10,6 +10,7 @@ pub mod filter;
 mod parser;
 pub mod recipe;
 mod slug;
+pub mod user;
 
 pub use emitter::*;
 pub use error::*;
@@ -17,3 +18,4 @@ pub use filter::*;
 pub use parser::*;
 pub use recipe::*;
 pub use slug::*;
+pub use user::*;

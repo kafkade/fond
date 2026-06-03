@@ -11,6 +11,47 @@ use crate::pantry::{normalize_for_matching, phrase_matches, to_words};
 // Types
 // ═══════════════════════════════════════════════════════════════════
 
+/// A single item on a consolidated grocery list (from a meal plan).
+///
+/// Separate type from `GroceryItem` to preserve backward compatibility.
+/// The key difference is `from_recipes` (Vec) instead of `from_recipe` (String).
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsolidatedGroceryItem {
+    pub name: String,
+    pub quantity: Option<String>,
+    pub unit: Option<String>,
+    pub note: Option<String>,
+    pub category: String,
+    pub from_recipes: Vec<String>,
+    pub optional: bool,
+    pub pantry_covered: bool,
+    pub matched_pantry_item: Option<String>,
+}
+
+/// A consolidated grocery list from a meal plan.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsolidatedGroceryList {
+    pub plan_name: String,
+    pub recipe_count: usize,
+    pub recipe_slugs: Vec<String>,
+    pub total_ingredients: usize,
+    pub consolidated_items: usize,
+    pub pantry_covered_count: usize,
+    pub items_to_buy: usize,
+    pub items: Vec<ConsolidatedGroceryItem>,
+    pub categories: Vec<String>,
+}
+
+/// Raw ingredient with recipe source tracking (for multi-recipe aggregation).
+struct SourcedIngredient {
+    name: String,
+    quantity: String,
+    unit: String,
+    note: String,
+    optional: bool,
+    from_recipe: String,
+}
+
 /// A single item on the grocery list.
 #[derive(Debug, Clone, Serialize)]
 pub struct GroceryItem {
@@ -653,6 +694,174 @@ impl<'a> GroceryRepository<'a> {
             categories,
         }))
     }
+
+    /// Generate a consolidated grocery list from a meal plan.
+    ///
+    /// Aggregates ingredients across all recipes in the plan,
+    /// combining duplicates by normalized name + unit.
+    pub fn from_plan(
+        &self,
+        plan_name: &str,
+        include_pantry: bool,
+    ) -> Result<Option<ConsolidatedGroceryList>, StoreError> {
+        let conn = self.db.conn();
+
+        // Get plan ID
+        let plan_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM meal_plans WHERE LOWER(name) = LOWER(?1)",
+                params![plan_name],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let Some(plan_id) = plan_id else {
+            return Ok(None);
+        };
+
+        // Get distinct recipe slugs from the plan
+        let mut slug_stmt = conn.prepare(
+            "SELECT DISTINCT recipe_slug FROM meal_plan_entries WHERE meal_plan_id = ?1",
+        )?;
+        let recipe_slugs: Vec<String> = slug_stmt
+            .query_map(params![plan_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if recipe_slugs.is_empty() {
+            return Ok(Some(ConsolidatedGroceryList {
+                plan_name: plan_name.to_string(),
+                recipe_count: 0,
+                recipe_slugs: vec![],
+                total_ingredients: 0,
+                consolidated_items: 0,
+                pantry_covered_count: 0,
+                items_to_buy: 0,
+                items: vec![],
+                categories: vec![],
+            }));
+        }
+
+        // Gather all ingredients from all plan recipes with source tracking
+        let mut all_ingredients: Vec<SourcedIngredient> = Vec::new();
+        let mut total_ingredients = 0;
+
+        for slug in &recipe_slugs {
+            let recipe_row: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM recipes WHERE slug = ?1",
+                    params![slug],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            let Some(recipe_id) = recipe_row else {
+                continue; // Recipe may have been deleted
+            };
+
+            let mut ing_stmt = conn.prepare(
+                "SELECT name, quantity, unit, note, optional FROM recipe_ingredients
+                 WHERE recipe_id = ?1 ORDER BY sort_order",
+            )?;
+
+            let ingredients: Vec<SourcedIngredient> = ing_stmt
+                .query_map(params![recipe_id], |row| {
+                    Ok(SourcedIngredient {
+                        name: row.get(0)?,
+                        quantity: row.get(1)?,
+                        unit: row.get(2)?,
+                        note: row.get(3)?,
+                        optional: row.get::<_, i32>(4)? != 0,
+                        from_recipe: slug.clone(),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            total_ingredients += ingredients.len();
+            all_ingredients.extend(ingredients);
+        }
+
+        // Get present pantry items
+        let mut pantry_stmt = conn.prepare("SELECT name FROM pantry_items WHERE present = 1")?;
+        let pantry_names: Vec<String> = pantry_stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Aggregate across all recipes
+        let aggregated = aggregate_sourced_ingredients(&all_ingredients);
+
+        // Build consolidated grocery items
+        let mut items = Vec::new();
+        let mut pantry_covered_count = 0;
+
+        for agg in &aggregated {
+            let (matched, matched_item) = find_grocery_pantry_match(&agg.name, &pantry_names);
+
+            if matched {
+                pantry_covered_count += 1;
+            }
+
+            if matched && !include_pantry {
+                continue;
+            }
+
+            let category = categorize_ingredient(&agg.name).to_string();
+
+            items.push(ConsolidatedGroceryItem {
+                name: agg.name.clone(),
+                quantity: if agg.quantity.is_empty() {
+                    None
+                } else {
+                    Some(agg.quantity.clone())
+                },
+                unit: if agg.unit.is_empty() {
+                    None
+                } else {
+                    Some(agg.unit.clone())
+                },
+                note: if agg.note.is_empty() {
+                    None
+                } else {
+                    Some(agg.note.clone())
+                },
+                category,
+                from_recipes: agg.from_recipes.clone(),
+                optional: agg.optional,
+                pantry_covered: matched,
+                matched_pantry_item: matched_item,
+            });
+        }
+
+        // Sort by category order, then by name
+        items.sort_by(|a, b| {
+            let a_idx = category_index(&a.category);
+            let b_idx = category_index(&b.category);
+            a_idx.cmp(&b_idx).then(a.name.cmp(&b.name))
+        });
+
+        // Collect distinct categories in order
+        let mut categories = Vec::new();
+        let mut seen_cats = std::collections::HashSet::new();
+        for item in &items {
+            if seen_cats.insert(item.category.clone()) {
+                categories.push(item.category.clone());
+            }
+        }
+
+        let items_to_buy = items.iter().filter(|i| !i.pantry_covered).count();
+
+        Ok(Some(ConsolidatedGroceryList {
+            plan_name: plan_name.to_string(),
+            recipe_count: recipe_slugs.len(),
+            recipe_slugs,
+            total_ingredients,
+            consolidated_items: items.len() + pantry_covered_count
+                - items.iter().filter(|i| i.pantry_covered).count(),
+            pantry_covered_count,
+            items_to_buy,
+            items,
+            categories,
+        }))
+    }
 }
 
 /// Get the sort index for a category name.
@@ -739,6 +948,91 @@ fn aggregate_ingredients(ingredients: &[RawIngredient]) -> Vec<AggregatedIngredi
             unit: display_unit.clone(),
             note,
             optional,
+        });
+    }
+
+    result
+}
+
+/// Aggregated ingredient with multi-recipe source tracking.
+struct AggregatedSourcedIngredient {
+    name: String,
+    quantity: String,
+    unit: String,
+    note: String,
+    optional: bool,
+    from_recipes: Vec<String>,
+}
+
+/// Aggregate ingredients from multiple recipes, tracking source recipes.
+fn aggregate_sourced_ingredients(
+    ingredients: &[SourcedIngredient],
+) -> Vec<AggregatedSourcedIngredient> {
+    // Key: (normalized_name, unit_lower)
+    let mut groups: BTreeMap<(String, String), Vec<&SourcedIngredient>> = BTreeMap::new();
+
+    for ing in ingredients {
+        let norm_name = normalize_for_matching(&ing.name);
+        let unit_lower = ing.unit.trim().to_lowercase();
+        groups.entry((norm_name, unit_lower)).or_default().push(ing);
+    }
+
+    let mut result = Vec::new();
+
+    for ((_norm_name, _unit), group) in &groups {
+        let display_name = &group[0].name;
+        let display_unit = &group[0].unit;
+
+        // Try to aggregate quantities
+        let quantities: Vec<(&str, Option<f64>)> = group
+            .iter()
+            .map(|i| (i.quantity.as_str(), parse_quantity(&i.quantity)))
+            .collect();
+
+        let all_numeric = quantities
+            .iter()
+            .all(|(raw, parsed)| raw.is_empty() || parsed.is_some());
+
+        let quantity = if group.len() == 1 {
+            group[0].quantity.clone()
+        } else if all_numeric {
+            let total: f64 = quantities.iter().filter_map(|(_, parsed)| *parsed).sum();
+            if total > 0.0 {
+                format_quantity(total)
+            } else {
+                String::new()
+            }
+        } else {
+            let parts: Vec<&str> = group
+                .iter()
+                .map(|i| i.quantity.as_str())
+                .filter(|q| !q.is_empty())
+                .collect();
+            parts.join(" + ")
+        };
+
+        // Merge notes
+        let notes: Vec<&str> = group
+            .iter()
+            .map(|i| i.note.as_str())
+            .filter(|n| !n.is_empty())
+            .collect();
+        let note = notes.join("; ");
+
+        let optional = group.iter().all(|i| i.optional);
+
+        // Collect distinct source recipes
+        let mut from_recipes: Vec<String> = group.iter().map(|i| i.from_recipe.clone()).collect();
+        from_recipes.sort();
+        from_recipes.dedup();
+
+        result.push(AggregatedSourcedIngredient {
+            name: display_name.clone(),
+            quantity,
+            unit: display_unit.clone(),
+            note,
+            optional,
+            from_recipes,
         });
     }
 
@@ -1079,5 +1373,198 @@ mod tests {
         assert!(category_index("Produce") < category_index("Meat & Seafood"));
         assert!(category_index("Dairy & Eggs") < category_index("Grains & Pasta"));
         assert!(category_index("Other") > category_index("Frozen"));
+    }
+
+    // --- aggregate_sourced_ingredients ---
+
+    #[test]
+    fn sourced_aggregate_same_ingredient_sums_quantity() {
+        let ingredients = vec![
+            SourcedIngredient {
+                name: "flour".to_string(),
+                quantity: "1".to_string(),
+                unit: "cup".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "pancakes".to_string(),
+            },
+            SourcedIngredient {
+                name: "flour".to_string(),
+                quantity: "2".to_string(),
+                unit: "cup".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "bread".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&ingredients);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "flour");
+        assert_eq!(result[0].quantity, "3");
+        assert_eq!(result[0].unit, "cup");
+        assert_eq!(result[0].from_recipes, vec!["bread", "pancakes"]);
+    }
+
+    #[test]
+    fn sourced_aggregate_tracks_multiple_recipes() {
+        let ingredients = vec![
+            SourcedIngredient {
+                name: "salt".to_string(),
+                quantity: "1".to_string(),
+                unit: "tsp".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "adobo".to_string(),
+            },
+            SourcedIngredient {
+                name: "salt".to_string(),
+                quantity: "1/2".to_string(),
+                unit: "tsp".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "pasta".to_string(),
+            },
+            SourcedIngredient {
+                name: "salt".to_string(),
+                quantity: "1".to_string(),
+                unit: "tsp".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "soup".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&ingredients);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].from_recipes, vec!["adobo", "pasta", "soup"]);
+        assert_eq!(result[0].quantity, "2 1/2");
+    }
+
+    #[test]
+    fn sourced_aggregate_different_units_separate() {
+        let ingredients = vec![
+            SourcedIngredient {
+                name: "butter".to_string(),
+                quantity: "2".to_string(),
+                unit: "tbsp".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "recipe-a".to_string(),
+            },
+            SourcedIngredient {
+                name: "butter".to_string(),
+                quantity: "1".to_string(),
+                unit: "cup".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "recipe-b".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&ingredients);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn sourced_aggregate_deduplicates_same_recipe() {
+        let ingredients = vec![
+            SourcedIngredient {
+                name: "garlic".to_string(),
+                quantity: "3".to_string(),
+                unit: "cloves".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "stew".to_string(),
+            },
+            SourcedIngredient {
+                name: "garlic".to_string(),
+                quantity: "2".to_string(),
+                unit: "cloves".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "stew".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&ingredients);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].quantity, "5");
+        // Same recipe should appear once (dedup)
+        assert_eq!(result[0].from_recipes, vec!["stew"]);
+    }
+
+    #[test]
+    fn sourced_aggregate_merges_notes_from_recipes() {
+        let ingredients = vec![
+            SourcedIngredient {
+                name: "onion".to_string(),
+                quantity: "1".to_string(),
+                unit: "".to_string(),
+                note: "diced".to_string(),
+                optional: false,
+                from_recipe: "soup".to_string(),
+            },
+            SourcedIngredient {
+                name: "onion".to_string(),
+                quantity: "1".to_string(),
+                unit: "".to_string(),
+                note: "sliced".to_string(),
+                optional: false,
+                from_recipe: "salad".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&ingredients);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].quantity, "2");
+        assert_eq!(result[0].note, "diced; sliced");
+    }
+
+    #[test]
+    fn sourced_aggregate_optional_when_all_optional() {
+        let required = vec![
+            SourcedIngredient {
+                name: "cilantro".to_string(),
+                quantity: "".to_string(),
+                unit: "".to_string(),
+                note: "".to_string(),
+                optional: true,
+                from_recipe: "a".to_string(),
+            },
+            SourcedIngredient {
+                name: "cilantro".to_string(),
+                quantity: "".to_string(),
+                unit: "".to_string(),
+                note: "".to_string(),
+                optional: false,
+                from_recipe: "b".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&required);
+        assert!(!result[0].optional, "not optional if any entry is required");
+
+        let all_opt = vec![
+            SourcedIngredient {
+                name: "cilantro".to_string(),
+                quantity: "".to_string(),
+                unit: "".to_string(),
+                note: "".to_string(),
+                optional: true,
+                from_recipe: "a".to_string(),
+            },
+            SourcedIngredient {
+                name: "cilantro".to_string(),
+                quantity: "".to_string(),
+                unit: "".to_string(),
+                note: "".to_string(),
+                optional: true,
+                from_recipe: "b".to_string(),
+            },
+        ];
+
+        let result = aggregate_sourced_ingredients(&all_opt);
+        assert!(result[0].optional, "optional when all entries optional");
     }
 }
