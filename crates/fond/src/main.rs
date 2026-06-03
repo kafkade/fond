@@ -276,6 +276,12 @@ enum Commands {
         #[command(subcommand)]
         action: PlanAction,
     },
+
+    /// Show estimated nutrition facts for a recipe (informational).
+    Nutrition {
+        /// Recipe slug (e.g., "chicken-adobo")
+        slug: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -594,11 +600,9 @@ fn main() -> Result<()> {
             PlanAction::Clear { plan, yes } => cmd_plan_clear(&paths, &plan, yes, &fmt),
             PlanAction::Delete { plan, yes } => cmd_plan_delete(&paths, &plan, yes, &fmt),
         },
+        Commands::Nutrition { slug } => cmd_nutrition(&paths, &slug, &fmt),
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// Helpers
 // ═══════════════════════════════════════════════════════════════════
 
 fn open_db(paths: &FondPaths) -> Result<FondDb> {
@@ -3564,4 +3568,120 @@ fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Nutrition
+// ═══════════════════════════════════════════════════════════════════
+
+fn cmd_nutrition(paths: &FondPaths, slug: &str, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let repo = fond_store::NutritionRepository::new(&db);
+    repo.seed_nutrition_facts()?;
+
+    let result = repo
+        .estimate_recipe_nutrition(slug)?
+        .ok_or_else(|| anyhow::anyhow!("recipe '{}' not found", slug))?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&result)?;
+            println!("{json}");
+        }
+        OutputFormat::Table => {
+            println!("Nutrition estimate for: {}\n", result.recipe_slug);
+
+            if let Some(servings) = result.servings {
+                println!("Servings: {servings}");
+            }
+
+            // Matched ingredients table
+            if !result.matched.is_empty() {
+                let mut table = Table::new();
+                table.set_content_arrangement(ContentArrangement::Dynamic);
+                table.set_header(vec!["Ingredient", "USDA Match", "Conf.", "Grams", "kcal"]);
+
+                for m in &result.matched {
+                    let conf = match m.confidence {
+                        fond_store::MatchConfidence::High => "high",
+                        fond_store::MatchConfidence::Medium => "med",
+                    };
+                    let rounded = m.contribution.rounded();
+                    table.add_row(vec![
+                        m.ingredient_name.clone(),
+                        truncate_str(&m.usda_description, 30),
+                        conf.to_string(),
+                        format!("{:.0}", m.grams),
+                        format!("{:.0}", rounded.kcal),
+                    ]);
+                }
+                println!("{table}");
+            }
+
+            // Totals
+            let total = result.total.rounded();
+            println!("\n── Totals ──");
+            println!("  Calories:  {:.0} kcal", total.kcal);
+            println!("  Protein:   {:.0} g", total.protein_g);
+            println!("  Fat:       {:.0} g", total.fat_g);
+            println!("  Carbs:     {:.0} g", total.carb_g);
+            if let Some(fiber) = total.fiber_g {
+                println!("  Fiber:     {:.0} g", fiber);
+            }
+            if let Some(sugar) = total.sugar_g {
+                println!("  Sugar:     {:.0} g", sugar);
+            }
+            if let Some(sodium) = total.sodium_mg {
+                println!("  Sodium:    {:.0} mg", sodium);
+            }
+
+            if let Some(ref per_serving) = result.per_serving {
+                let ps = per_serving.rounded();
+                println!(
+                    "\n── Per Serving ({} servings) ──",
+                    result.servings.unwrap()
+                );
+                println!("  Calories:  {:.0} kcal", ps.kcal);
+                println!("  Protein:   {:.0} g", ps.protein_g);
+                println!("  Fat:       {:.0} g", ps.fat_g);
+                println!("  Carbs:     {:.0} g", ps.carb_g);
+                if let Some(fiber) = ps.fiber_g {
+                    println!("  Fiber:     {:.0} g", fiber);
+                }
+                if let Some(sugar) = ps.sugar_g {
+                    println!("  Sugar:     {:.0} g", sugar);
+                }
+                if let Some(sodium) = ps.sodium_mg {
+                    println!("  Sodium:    {:.0} mg", sodium);
+                }
+            }
+
+            // Coverage
+            println!(
+                "\nCoverage: {} of {} ingredients matched ({:.0}%)",
+                result.matched_count, result.ingredient_count, result.coverage_pct
+            );
+
+            // Unmatched
+            if !result.unmatched.is_empty() {
+                println!("\nUnmatched ingredients:");
+                for u in &result.unmatched {
+                    println!("  • {} — {}", u.name, u.reason);
+                }
+            }
+
+            // Disclaimer
+            println!("\n⚠ {}", fond_store::NUTRITION_DISCLAIMER);
+        }
+    }
+
+    Ok(())
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max - 1])
+    }
 }
