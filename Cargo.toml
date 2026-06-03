@@ -5,6 +5,7 @@ members = [
     "crates/fond-core",
     "crates/fond-domain",
     "crates/fond-import",
+    "crates/fond-scrape",
     "crates/fond-store",
     "crates/fond-timeline",
 ]
@@ -21,6 +22,7 @@ fond-domain = { path = "crates/fond-domain", version = "0.3.0" }
 fond-core = { path = "crates/fond-core", version = "0.3.0" }
 fond-import = { path = "crates/fond-import", version = "0.3.0" }
 fond-store = { path = "crates/fond-store", version = "0.3.0" }
+fond-scrape = { path = "crates/fond-scrape", version = "0.3.0" }
 fond-timeline = { path = "crates/fond-timeline", version = "0.3.0" }
 thiserror = "2"
 uuid = { version = "1", features = ["v7", "serde"] }

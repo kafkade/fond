@@ -16,6 +16,7 @@ path = "src/main.rs"
 fond-core.workspace = true
 fond-domain.workspace = true
 fond-import.workspace = true
+fond-scrape.workspace = true
 fond-store.workspace = true
 fond-timeline.workspace = true
 clap = { version = "4", features = ["derive", "env"] }

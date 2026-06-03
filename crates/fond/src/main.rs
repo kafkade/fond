@@ -3447,7 +3447,7 @@ fn cmd_import_url(paths: &FondPaths, url: &str, dry_run: bool, fmt: &OutputForma
         anyhow::bail!("invalid URL: only http:// and https:// are supported");
     }
 
-    // Fetch HTML via curl subprocess (HTTP stays outside fond-import)
+    // Fetch HTML via fond-scrape HTTP client
     let html = fetch_url(url).context("failed to fetch URL")?;
 
     // Gather existing data for dedup
@@ -3506,42 +3506,10 @@ fn cmd_import_url(paths: &FondPaths, url: &str, dry_run: bool, fmt: &OutputForma
     Ok(())
 }
 
-/// Fetch HTML from a URL using curl subprocess.
+/// Fetch HTML from a URL using the fond-scrape HTTP client.
 fn fetch_url(url: &str) -> Result<String> {
-    let output = std::process::Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "30",
-            "--max-redirs",
-            "5",
-            "-H",
-            "User-Agent: fond/0.3.0 (recipe importer)",
-            "-H",
-            "Accept: text/html,application/xhtml+xml",
-            "-w",
-            "\n%{http_code}",
-            url,
-        ])
-        .output()
-        .context("failed to run curl — is curl installed?")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("curl failed: {stderr}");
-    }
-
-    let raw = String::from_utf8(output.stdout).context("response is not valid UTF-8")?;
-
-    // Extract HTTP status code from the last line (via -w flag)
-    let (body, status_line) = raw.rsplit_once('\n').unwrap_or((&raw, ""));
-    let status: u16 = status_line.trim().parse().unwrap_or(0);
-
-    if !(200..300).contains(&status) {
-        anyhow::bail!("HTTP {status} for {url}");
-    }
-
-    Ok(body.to_string())
+    let client = fond_scrape::ScrapeClient::new().context("failed to build HTTP client")?;
+    client.fetch_html(url).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn print_import_report(report: &fond_import::ImportReport, dry_run: bool) {
