@@ -35,7 +35,7 @@ anyhow = "1"
 directories = "6"
 cooklang = "0.18"
 flate2 = "1"
-zip = { version = "4", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 scraper = "0.22"
 refinery = { version = "0.9", features = ["rusqlite"] }
 tempfile = "3"
