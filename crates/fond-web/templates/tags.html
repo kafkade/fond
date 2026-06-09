@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Tags — fond{% endblock %}
+{% block nav_tags %}active{% endblock %}
+
+{% block content %}
+<h1>Tags</h1>
+
+{% if tags.is_empty() %}
+<div class="empty-state">
+    <p>No tags yet.</p>
+    <p>Add tags to recipes with <code>fond tag &lt;slug&gt; --add "tag1,tag2"</code>.</p>
+</div>
+{% else %}
+<div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+    {% for tag in tags %}
+    <a href="/?tag={{ tag.name }}" class="tag" style="font-size:0.9rem;padding:0.3rem 0.75rem;">
+        {{ tag.name }} <span style="opacity:0.7;">({{ tag.count }})</span>
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

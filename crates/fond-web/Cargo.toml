@@ -1,0 +1,24 @@
+[package]
+name = "fond-web"
+description = "Server-rendered web UI for fond (Axum + HTMX)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fond-domain.workspace = true
+fond-store.workspace = true
+fond-core.workspace = true
+rusqlite.workspace = true
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+askama = "0.13"
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+serde = { workspace = true }
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

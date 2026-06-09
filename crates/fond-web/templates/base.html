@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}fond{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"
+            integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
+            crossorigin="anonymous"></script>
+    <style>
+        :root {
+            --bg: #fafaf9;
+            --fg: #1c1917;
+            --muted: #78716c;
+            --border: #d6d3d1;
+            --accent: #b45309;
+            --accent-light: #fef3c7;
+            --card-bg: #ffffff;
+            --success: #15803d;
+            --danger: #b91c1c;
+            --radius: 0.5rem;
+            --shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container {
+            max-width: 72rem;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        /* ── Header ─────────────────────────────────── */
+        header {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            padding: 0.75rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        header .container {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+        }
+
+        nav {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        nav a {
+            padding: 0.4rem 0.75rem;
+            color: var(--muted);
+            text-decoration: none;
+            border-radius: var(--radius);
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        nav a:hover, nav a.active {
+            background: var(--accent-light);
+            color: var(--accent);
+        }
+
+        /* ── Search ─────────────────────────────────── */
+        .search-box {
+            flex: 1;
+            min-width: 200px;
+            max-width: 400px;
+            margin-left: auto;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 0.9rem;
+            background: var(--bg);
+            color: var(--fg);
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .search-box input:focus {
+            border-color: var(--accent);
+        }
+
+        /* ── Main ───────────────────────────────────── */
+        main {
+            padding: 1.5rem 0 3rem;
+        }
+
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin: 0 0 1rem;
+            letter-spacing: -0.02em;
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 1.5rem 0 0.75rem;
+            letter-spacing: -0.01em;
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 1rem 0 0.5rem;
+        }
+
+        /* ── Recipe grid ────────────────────────────── */
+        .recipe-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+            gap: 1rem;
+        }
+
+        .recipe-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem 1.25rem;
+            text-decoration: none;
+            color: inherit;
+            transition: box-shadow 0.15s, border-color 0.15s;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .recipe-card:hover {
+            box-shadow: var(--shadow);
+            border-color: var(--accent);
+        }
+
+        .recipe-card .title {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: var(--fg);
+        }
+
+        .recipe-card .meta {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .recipe-card .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            margin-top: 0.25rem;
+        }
+
+        /* ── Tags ───────────────────────────────────── */
+        .tag {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            background: var(--accent-light);
+            color: var(--accent);
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-decoration: none;
+        }
+
+        .tag:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* ── Detail page ────────────────────────────── */
+        .recipe-header {
+            margin-bottom: 1.5rem;
+        }
+
+        .recipe-header h1 {
+            margin-bottom: 0.25rem;
+        }
+
+        .recipe-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            color: var(--muted);
+            font-size: 0.9rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .recipe-meta span::before {
+            margin-right: 0.3rem;
+        }
+
+        .recipe-sections {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 2rem;
+            align-items: start;
+        }
+
+        @media (max-width: 700px) {
+            .recipe-sections {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ── Ingredients ────────────────────────────── */
+        .ingredients-list {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem 1.25rem;
+        }
+
+        .ingredients-list ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .ingredients-list li {
+            padding: 0.4rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.95rem;
+        }
+
+        .ingredients-list li:last-child {
+            border-bottom: none;
+        }
+
+        .ingredients-list .qty {
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .ingredients-list .note {
+            color: var(--muted);
+            font-size: 0.85rem;
+            font-style: italic;
+        }
+
+        .ingredients-list .optional-badge {
+            font-size: 0.7rem;
+            color: var(--muted);
+            background: var(--bg);
+            padding: 0.1rem 0.4rem;
+            border-radius: 999px;
+            margin-left: 0.3rem;
+        }
+
+        /* ── Steps ──────────────────────────────────── */
+        .steps-list {
+            counter-reset: step;
+        }
+
+        .step {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+            align-items: flex-start;
+        }
+
+        .step-number {
+            flex-shrink: 0;
+            width: 2rem;
+            height: 2rem;
+            background: var(--accent);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.85rem;
+        }
+
+        .step-body {
+            flex: 1;
+            line-height: 1.7;
+        }
+
+        /* ── Notes ──────────────────────────────────── */
+        .note-card {
+            background: var(--accent-light);
+            border-radius: var(--radius);
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .note-card .note-date {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+
+        /* ── Rating ─────────────────────────────────── */
+        .rating {
+            color: var(--accent);
+            font-size: 1.2rem;
+            letter-spacing: 0.1rem;
+        }
+
+        /* ── Table ──────────────────────────────────── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        th, td {
+            padding: 0.6rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: var(--bg);
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        td a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        td a:hover {
+            text-decoration: underline;
+        }
+
+        /* ── Grocery ────────────────────────────────── */
+        .grocery-section h3 {
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.25rem;
+        }
+
+        .grocery-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.35rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .grocery-item.covered {
+            text-decoration: line-through;
+            color: var(--muted);
+        }
+
+        .grocery-item .item-name { flex: 1; }
+        .grocery-item .item-qty {
+            color: var(--accent);
+            font-weight: 600;
+            min-width: 5rem;
+            text-align: right;
+        }
+
+        /* ── HTMX indicator ─────────────────────────── */
+        .htmx-indicator {
+            display: none;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        .htmx-request .htmx-indicator {
+            display: inline;
+        }
+
+        /* ── Utilities ──────────────────────────────── */
+        .count-badge {
+            background: var(--accent-light);
+            color: var(--accent);
+            padding: 0.1rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--muted);
+        }
+
+        .empty-state p {
+            font-size: 1.1rem;
+        }
+
+        .back-link {
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .description {
+            color: var(--muted);
+            font-style: italic;
+            margin-bottom: 1rem;
+        }
+
+        /* ── Responsive ─────────────────────────────── */
+        @media (max-width: 600px) {
+            header .container {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.5rem;
+            }
+
+            .search-box {
+                max-width: none;
+                margin-left: 0;
+            }
+
+            .recipe-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 { font-size: 1.4rem; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <a href="/" class="logo">fond</a>
+            <nav>
+                <a href="/" class="{% block nav_recipes %}{% endblock %}">Recipes</a>
+                <a href="/plans" class="{% block nav_plans %}{% endblock %}">Meal Plans</a>
+                <a href="/grocery" class="{% block nav_grocery %}{% endblock %}">Grocery</a>
+                <a href="/tags" class="{% block nav_tags %}{% endblock %}">Tags</a>
+            </nav>
+            {% block search %}{% endblock %}
+        </div>
+    </header>
+    <main>
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+</body>
+</html>

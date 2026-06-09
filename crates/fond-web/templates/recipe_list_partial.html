@@ -1,0 +1,29 @@
+{% if recipes.is_empty() %}
+<div class="empty-state">
+    {% if query.is_empty() %}
+    <p>No recipes yet.</p>
+    <p>Add some with <code>fond add</code> or <code>fond import</code>.</p>
+    {% else %}
+    <p>No recipes found for "{{ query }}".</p>
+    {% endif %}
+</div>
+{% else %}
+<div class="recipe-grid">
+    {% for recipe in recipes %}
+    <a href="/recipes/{{ recipe.slug }}" class="recipe-card">
+        <span class="title">{{ recipe.title }}</span>
+        <span class="meta">
+            {% if !recipe.source.is_empty() %}{{ recipe.source }}{% endif %}
+            {% if !recipe.total_time.is_empty() %} · {{ recipe.total_time }}{% endif %}
+        </span>
+        {% if !recipe.tags.is_empty() %}
+        <span class="tags">
+            {% for tag in recipe.tags %}
+            <span class="tag">{{ tag }}</span>
+            {% endfor %}
+        </span>
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+{% endif %}

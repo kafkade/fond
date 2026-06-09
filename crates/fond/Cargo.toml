@@ -19,6 +19,7 @@ fond-import.workspace = true
 fond-scrape.workspace = true
 fond-store.workspace = true
 fond-timeline.workspace = true
+fond-web.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete.workspace = true
 comfy-table.workspace = true
@@ -26,6 +27,7 @@ ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+tokio.workspace = true
 atty = "0.2"
 flate2.workspace = true
 zip.workspace = true

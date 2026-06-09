@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}{{ plan.name }} — fond{% endblock %}
+{% block nav_plans %}active{% endblock %}
+
+{% block content %}
+<a href="/plans" class="back-link">← All plans</a>
+<h1>{{ plan.name }}</h1>
+
+{% if plan.entries.is_empty() %}
+<div class="empty-state">
+    <p>This plan has no entries yet.</p>
+    <p>Add recipes with <code>fond plan add {{ plan.name }} day:meal=recipe-slug</code>.</p>
+</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Meal</th>
+            <th>Recipe</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in plan.entries %}
+        <tr>
+            <td>{{ entry.plan_date }}</td>
+            <td style="text-transform:capitalize;">{{ entry.meal }}</td>
+            <td>
+                <a href="/recipes/{{ entry.recipe_slug }}">
+                    {{ entry.recipe_title.as_deref().unwrap_or(&entry.recipe_slug) }}
+                </a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div style="margin-top:1rem;">
+    <a href="/grocery?plan={{ plan.name }}" style="color:var(--accent);text-decoration:none;font-weight:500;">
+        🛒 Generate grocery list for this plan →
+    </a>
+</div>
+{% endif %}
+{% endblock %}

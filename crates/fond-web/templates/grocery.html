@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Grocery List — fond{% endblock %}
+{% block nav_grocery %}active{% endblock %}
+
+{% block content %}
+<h1>Grocery List</h1>
+
+{% if let Some(err) = error %}
+<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius);padding:1rem;color:var(--danger);margin-bottom:1rem;">
+    {{ err }}
+</div>
+{% endif %}
+
+{% if let Some(grocery) = list %}
+<p style="color:var(--muted);margin-bottom:1rem;">
+    <strong>{{ grocery.recipe_title }}</strong> ·
+    {{ grocery.items_to_buy }} item{% if grocery.items_to_buy != 1 %}s{% endif %} to buy
+    {% if grocery.pantry_covered_count > 0 %}
+    · {{ grocery.pantry_covered_count }} covered by pantry
+    {% endif %}
+</p>
+
+{% if grocery.items.is_empty() %}
+<p style="color:var(--muted);">Nothing to buy — everything is in your pantry!</p>
+{% else %}
+    {% for cat in grocery.categories %}
+    <div class="grocery-section">
+        <h3>{{ cat }}</h3>
+        {% for item in grocery.items %}
+            {% if item.category == *cat %}
+            <div class="grocery-item{% if item.pantry_covered %} covered{% endif %}">
+                <span class="item-name">
+                    {{ item.name }}
+                    {% if item.optional %}<span class="optional-badge">optional</span>{% endif %}
+                    {% if item.pantry_covered %}
+                    <span style="font-size:0.8rem;color:var(--success);">✓ in pantry</span>
+                    {% endif %}
+                </span>
+                <span class="item-qty">
+                    {% if let Some(q) = item.quantity %}{{ q }}{% endif %}
+                    {% if let Some(u) = item.unit %} {{ u }}{% endif %}
+                </span>
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+    {% endfor %}
+{% endif %}
+{% else %}
+    {% if recipe_slug.is_empty() %}
+    <div class="empty-state">
+        <p>Choose a recipe to generate a grocery list.</p>
+        <p>Or use <code>fond grocery from-recipe &lt;slug&gt;</code> from the CLI.</p>
+    </div>
+    {% endif %}
+{% endif %}
+{% endblock %}

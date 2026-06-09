@@ -282,6 +282,20 @@ enum Commands {
         /// Recipe slug (e.g., "chicken-adobo")
         slug: String,
     },
+
+    /// Launch the web UI (Axum + HTMX, server-rendered).
+    ///
+    /// Starts a local HTTP server for household members who prefer a browser.
+    /// Designed for trusted LAN / self-host — no authentication.
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "3000", env = "FOND_PORT")]
+        port: u16,
+
+        /// Address to bind to (use 0.0.0.0 for LAN access)
+        #[arg(long, default_value = "127.0.0.1", env = "FOND_BIND")]
+        bind: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -601,6 +615,7 @@ fn main() -> Result<()> {
             PlanAction::Delete { plan, yes } => cmd_plan_delete(&paths, &plan, yes, &fmt),
         },
         Commands::Nutrition { slug } => cmd_nutrition(&paths, &slug, &fmt),
+        Commands::Serve { port, bind } => cmd_serve(&paths, port, &bind),
     }
 }
 // ═══════════════════════════════════════════════════════════════════
@@ -3684,4 +3699,27 @@ fn truncate_str(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max - 1])
     }
+}
+
+fn cmd_serve(paths: &FondPaths, port: u16, bind: &str) -> Result<()> {
+    let db_path = paths.data_dir.join("fond.db");
+    if !db_path.exists() {
+        anyhow::bail!(
+            "no fond database found at {} — run `fond init` first",
+            db_path.display()
+        );
+    }
+
+    let config = fond_web::ServeConfig {
+        bind: bind.to_string(),
+        port,
+        data_dir: paths.data_dir.clone(),
+    };
+
+    eprintln!("Starting fond web UI on http://{}:{}", bind, port);
+    eprintln!("Press Ctrl+C to stop.");
+
+    tokio::runtime::Runtime::new()
+        .context("failed to create async runtime")?
+        .block_on(fond_web::serve(config))
 }
