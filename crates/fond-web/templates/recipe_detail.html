@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}{{ recipe.title }} — fond{% endblock %}
+{% block nav_recipes %}active{% endblock %}
+
+{% block content %}
+<a href="/" class="back-link">← All recipes</a>
+
+<div class="recipe-header">
+    <h1>{{ recipe.title }}</h1>
+
+    <div class="recipe-meta">
+        {% if !recipe.source.is_empty() %}
+        <span>
+            {% if !recipe.source_url.is_empty() %}
+            <a href="{{ recipe.source_url }}" target="_blank" rel="noopener">{{ recipe.source }}</a>
+            {% else %}
+            {{ recipe.source }}
+            {% endif %}
+        </span>
+        {% endif %}
+        {% if !recipe.total_time.is_empty() %}<span>⏱ {{ recipe.total_time }}</span>{% endif %}
+        {% if !recipe.prep_time.is_empty() %}<span>Prep: {{ recipe.prep_time }}</span>{% endif %}
+        {% if !recipe.cook_time.is_empty() %}<span>Cook: {{ recipe.cook_time }}</span>{% endif %}
+        {% if !recipe.servings.is_empty() %}<span>🍽 {{ recipe.servings }} servings</span>{% endif %}
+        {% if !recipe.recipe_yield.is_empty() %}<span>Yield: {{ recipe.recipe_yield }}</span>{% endif %}
+    </div>
+
+    {% if !tags.is_empty() %}
+    <div class="tags" style="margin-bottom:0.5rem;">
+        {% for tag in tags %}
+        <a href="/?tag={{ tag }}" class="tag">{{ tag }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if let Some(r) = rating %}
+    <div class="rating" title="Average rating: {{ "{:.1}"|format(r) }}/5">
+        {% for i in 1..=5 %}{% if (i as f64) <= *r %}★{% else %}☆{% endif %}{% endfor %}
+        <span style="font-size:0.85rem;color:var(--muted);">{{ "{:.1}"|format(r) }}/5</span>
+    </div>
+    {% endif %}
+
+    {% if !recipe.description.is_empty() %}
+    <p class="description">{{ recipe.description }}</p>
+    {% endif %}
+</div>
+
+<div class="recipe-sections">
+    <div class="ingredients-list">
+        <h2>Ingredients</h2>
+        {% if ingredients.is_empty() %}
+        <p style="color:var(--muted);">No ingredients listed.</p>
+        {% else %}
+        <ul>
+            {% for ing in ingredients %}
+            <li>
+                {% if !ing.quantity.is_empty() || !ing.unit.is_empty() %}
+                <span class="qty">
+                    {% if !ing.quantity.is_empty() %}{{ ing.quantity }}{% endif %}
+                    {% if !ing.unit.is_empty() %} {{ ing.unit }}{% endif %}
+                </span>
+                {% endif %}
+                {{ ing.name }}
+                {% if ing.optional %}<span class="optional-badge">optional</span>{% endif %}
+                {% if !ing.note.is_empty() %}<span class="note"> — {{ ing.note }}</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <div class="steps-section">
+        <h2>Instructions</h2>
+        {% if steps.is_empty() %}
+        <p style="color:var(--muted);">No instructions listed.</p>
+        {% else %}
+        <div class="steps-list">
+            {% for step in steps %}
+            {% if !step.section.is_empty() %}
+            <h3>{{ step.section }}</h3>
+            {% endif %}
+            <div class="step">
+                <span class="step-number">{{ step.number }}</span>
+                <div class="step-body">{{ step.body }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if !notes.is_empty() %}
+<div style="margin-top:2rem;">
+    <h2>Notes</h2>
+    {% for note in notes %}
+    <div class="note-card">
+        <p>{{ note.body }}</p>
+        <span class="note-date">{{ note.created_at }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div style="margin-top:2rem;">
+    <a href="/grocery?recipe={{ recipe.slug }}" style="color:var(--accent);text-decoration:none;font-weight:500;">
+        🛒 Generate grocery list →
+    </a>
+</div>
+{% endblock %}

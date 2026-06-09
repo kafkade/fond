@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Meal Plans — fond{% endblock %}
+{% block nav_plans %}active{% endblock %}
+
+{% block content %}
+<h1>Meal Plans</h1>
+
+{% if plans.is_empty() %}
+<div class="empty-state">
+    <p>No meal plans yet.</p>
+    <p>Create one with <code>fond plan add &lt;name&gt; &lt;assignment&gt;</code>.</p>
+</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>Plan</th>
+            <th>Entries</th>
+            <th>Start Date</th>
+            <th>Created</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for plan in plans %}
+        <tr>
+            <td><a href="/plans/{{ plan.name }}">{{ plan.name }}</a></td>
+            <td>{{ plan.entry_count }}</td>
+            <td>{{ plan.start_date.as_deref().unwrap_or("—") }}</td>
+            <td>{{ plan.created_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

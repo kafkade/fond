@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Recipes — fond{% endblock %}
+{% block nav_recipes %}active{% endblock %}
+
+{% block search %}
+<div class="search-box">
+    <input type="search"
+           name="q"
+           placeholder="Search recipes…"
+           value="{{ query }}"
+           hx-get="/recipes"
+           hx-trigger="input changed delay:300ms, search"
+           hx-target="#recipe-results"
+           hx-push-url="true"
+           hx-include="this"
+           autocomplete="off">
+    <span class="htmx-indicator">Searching…</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.5rem;">
+    <h1>Recipes <span class="count-badge">{{ recipe_count }}</span></h1>
+</div>
+
+<div id="recipe-results">
+    {% include "recipe_list_partial.html" %}
+</div>
+{% endblock %}

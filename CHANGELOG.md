@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Web UI: `fond serve` launches a local Axum HTTP server with HTMX-powered server-rendered pages for household members who prefer a browser over the CLI
+- Recipe browsing with responsive card grid, live search-as-you-type (HTMX, 300ms debounced), and tag filtering
+- Recipe detail view showing ingredients, steps, notes, average rating, and source attribution
+- Meal plan list and detail views with recipe links
+- Grocery list generation from the browser with pantry coverage indicators and category grouping
+- Tag cloud page with recipe counts and click-to-filter navigation
+- Responsive CSS for tablet and phone use in the kitchen (no JS build step, no external CSS framework)
+- `fond-web` crate: Axum 0.8 router, Askama templates, `Mutex<FondDb>` shared state
+- `--port` and `--bind` flags on `fond serve` with `FOND_PORT` / `FOND_BIND` env var support
 - Family profiles: `fond user add|list|show|rm|set|update` manages household members with allergens and dietary preferences
 - Allergen safety: `fond list --exclude-allergens` and `fond search --exclude-allergens` filter out recipes containing the active user's allergens, with substring matching against ~90 ingredient→allergen mappings
 - Active user switching: `fond user set <name>` selects the current user for notes, ratings, cook logs, and allergen checks
