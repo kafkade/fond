@@ -12,4 +12,16 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.13", features = ["blocking", "cookies"] }
-keyring = "3"
+# The `keyring` crate is, as of v4, just sample/CLI code: the library API now
+# lives in `keyring-core` and each platform's backend is a separate store crate
+# (per the maintainers' explicit guidance to depend on `keyring-core` directly).
+keyring-core = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-keyutils-keyring-store = "1"
