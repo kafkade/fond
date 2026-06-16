@@ -15,7 +15,7 @@ rusqlite.workspace = true
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 askama = "0.16"
-tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+tower-http = { version = "0.7", features = ["fs", "compression-gzip"] }
 serde = { workspace = true }
 serde_json.workspace = true
 anyhow.workspace = true
