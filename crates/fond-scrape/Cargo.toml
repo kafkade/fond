@@ -11,5 +11,5 @@ repository.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-reqwest = { version = "0.12", features = ["blocking", "cookies"] }
+reqwest = { version = "0.13", features = ["blocking", "cookies"] }
 keyring = "3"
