@@ -1,13 +1,43 @@
+use std::sync::Once;
+
 use crate::ScrapeError;
+
+/// Ensures the process-wide default credential store is registered exactly once.
+static STORE_INIT: Once = Once::new();
+
+/// Register the platform's native credential store as the `keyring-core` default.
+///
+/// `keyring-core` requires a default store to be set before any
+/// [`keyring_core::Entry`] is created. We register the platform's native
+/// backend. This is idempotent — only the first call has any effect.
+///
+/// On platforms without a supported native store, no store is registered and
+/// subsequent entry operations surface a `NoDefaultStore` error.
+fn init_store() {
+    STORE_INIT.call_once(|| {
+        #[cfg(target_os = "macos")]
+        if let Ok(store) = apple_native_keyring_store::keychain::Store::new() {
+            keyring_core::set_default_store(store);
+        }
+        #[cfg(target_os = "windows")]
+        if let Ok(store) = windows_native_keyring_store::Store::new() {
+            keyring_core::set_default_store(store);
+        }
+        #[cfg(target_os = "linux")]
+        if let Ok(store) = linux_keyutils_keyring_store::Store::new() {
+            keyring_core::set_default_store(store);
+        }
+    });
+}
 
 /// Credential storage using the OS keychain.
 ///
-/// Uses the `keyring` crate to store and retrieve credentials securely
+/// Uses the `keyring-core` crate to store and retrieve credentials securely
 /// via the platform's native credential manager:
 ///
 /// - **macOS**: Keychain
 /// - **Windows**: Credential Manager
-/// - **Linux**: Secret Service (via D-Bus, e.g. GNOME Keyring, KWallet)
+/// - **Linux**: kernel keyutils keyring
 ///
 /// Credentials are stored per service + username, identified by a
 /// service name (e.g., `"fond-my-service"`).
@@ -18,7 +48,8 @@ impl CredentialStore {
     ///
     /// Overwrites any existing credential for the same service + username.
     pub fn store(service: &str, username: &str, password: &str) -> Result<(), ScrapeError> {
-        let entry = keyring::Entry::new(service, username)
+        init_store();
+        let entry = keyring_core::Entry::new(service, username)
             .map_err(|e| ScrapeError::CredentialError(e.to_string()))?;
         entry
             .set_password(password)
@@ -29,11 +60,12 @@ impl CredentialStore {
     ///
     /// Returns `None` if no credential is stored for this service + username.
     pub fn load(service: &str, username: &str) -> Result<Option<String>, ScrapeError> {
-        let entry = keyring::Entry::new(service, username)
+        init_store();
+        let entry = keyring_core::Entry::new(service, username)
             .map_err(|e| ScrapeError::CredentialError(e.to_string()))?;
         match entry.get_password() {
             Ok(password) => Ok(Some(password)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(e) => Err(ScrapeError::CredentialError(e.to_string())),
         }
     }
@@ -42,11 +74,12 @@ impl CredentialStore {
     ///
     /// Returns `true` if a credential was deleted, `false` if none existed.
     pub fn delete(service: &str, username: &str) -> Result<bool, ScrapeError> {
-        let entry = keyring::Entry::new(service, username)
+        init_store();
+        let entry = keyring_core::Entry::new(service, username)
             .map_err(|e| ScrapeError::CredentialError(e.to_string()))?;
         match entry.delete_credential() {
             Ok(()) => Ok(true),
-            Err(keyring::Error::NoEntry) => Ok(false),
+            Err(keyring_core::Error::NoEntry) => Ok(false),
             Err(e) => Err(ScrapeError::CredentialError(e.to_string())),
         }
     }
@@ -82,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a working OS keychain (macOS Keychain, Windows Credential Manager, or Linux Secret Service)"]
+    #[ignore = "requires a working OS keychain (macOS Keychain, Windows Credential Manager, or Linux keyutils)"]
     fn store_load_delete_roundtrip() {
         let _ = CredentialStore::delete(TEST_SERVICE, TEST_USER);
 
