@@ -737,7 +737,7 @@ Mirrors `toku`'s proven choices where sensible; deviations are justified.
 | Web (Phase 4) | `axum` + HTMX | Server-rendered, light, same core | `[Validated]` |
 | Keychain (auth) | `keyring` | Store scrape creds securely | `[Validation Required]` |
 | Snapshot tests | `insta` | Golden tests for import/render | `[Validated]` |
-| Native bridge (Ph5) | UniFFI | Rust→Swift bindings | `[Validation Required]` |
+| Native bridge (Ph5) | UniFFI | Rust→Swift bindings | `[Validated]` |
 | Distribution | `cargo-dist` | Cross-platform binaries/installers | `[Validated]` |
 | Docs | `mdBook` | Matches toku, easy hosting | `[Validated]` |
 | CI | GitHub Actions | Free for OSS | `[Validated]` |
@@ -810,6 +810,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Deliverables:** UniFFI binding; SwiftUI recipe + cook-mode app; Watch timers.
 - **Risks:** UniFFI bridge complexity (🔴); App Store + sync expectations.
 - **Cut line:** Read/cook first; editing later.
+- **Progress:** Foundation landed — `fond-ffi` UniFFI crate (read + cook mode) plus a multiplatform SwiftUI proof-of-concept (iOS + macOS) under [`apple/`](apple/); see [ADR-011](docs/adr/011-native-apple-bridge.md). iPad layouts, the Watch app, and editing remain.
 
 ### Phase 6 — Smart Features *(Research)*
 
@@ -1099,7 +1100,7 @@ A consolidated record of every load-bearing decision. One row, one decision, one
 | D16 | License | MIT | Adoption + portfolio consistency (§11) | `[Validated]` |
 | D17 | Web stack (Ph4) | Axum + HTMX over `fond-core` | Light, server-rendered, same core | `[Validated]` |
 | D18 | Sync (Ph7) | File-sync first; cr-sqlite only if overlays need it | Defer CRDT complexity; leverage owned files | `[Validation Required]` |
-| D19 | Native bridge (Ph5) | UniFFI → SwiftUI | Reuse core on Apple platforms | `[Validation Required]` |
+| D19 | Native bridge (Ph5) | UniFFI → SwiftUI | Reuse core on Apple platforms | `[Validated]` |
 | D20 | Distribution/docs | cargo-dist + mdBook + GitHub Actions | Cross-platform binaries, free OSS CI | `[Validated]` |
 
 ---

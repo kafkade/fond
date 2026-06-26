@@ -97,13 +97,15 @@ foundation of a family kitchen.
 - **CLI**: clap v4 with `--json` for scripting
 - **TUI**: ratatui (cook mode)
 - **Web**: Axum + HTMX (Phase 4)
+- **Native Apple**: UniFFI + SwiftUI (`fond-ffi` + [`apple/`](apple/)) — iOS/macOS read + cook mode
 - **Architecture**: Cargo workspace — `fond`, `fond-core`, `fond-domain`, `fond-store`,
-  `fond-import`, `fond-scrape`, `fond-timeline`
+  `fond-import`, `fond-scrape`, `fond-timeline`, `fond-web`, `fond-ffi`
 
 ## Documentation
 
 - [Product Roadmap](ROADMAP.md) — 9-phase plan from first recipe to moonshots
-- [Architecture Decision Records](docs/adr/) — 10 ADRs covering load-bearing decisions
+- [Architecture Decision Records](docs/adr/) — 11 ADRs covering load-bearing decisions
+- [Native Apple apps](apple/) — building the SwiftUI app over the UniFFI bridge
 - [Contributing Guide](CONTRIBUTING.md) — development setup and contribution guidelines
 
 ## License

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native Apple bridge: new `fond-ffi` crate exposes read + cook-mode functionality (list, search, tags, recipe view, scaling, cooking timeline, reindex) to Swift via UniFFI-generated bindings over the existing Rust core
+- `apple/` workspace: `build-xcframework.sh` builds `Fond.xcframework` + Swift bindings, a `FondKit` Swift package wraps them, and a multiplatform SwiftUI app (`FondApp`) runs natively on iOS and macOS
+- SwiftUI proof-of-concept app: recipe browsing, full-text search, recipe detail with live ingredient scaling, and cook mode (backward-scheduled timeline with per-step start times, active/passive work, and timers)
+- Self-contained sample data: bundled `.cook` recipes are seeded into app storage on first launch and indexed via `FondClient.reindex()`, reinforcing that the SQLite database is a rebuildable derivative of the source files
 - Web UI: `fond serve` launches a local Axum HTTP server with HTMX-powered server-rendered pages for household members who prefer a browser over the CLI
 - Recipe browsing with responsive card grid, live search-as-you-type (HTMX, 300ms debounced), and tag filtering
 - Recipe detail view showing ingredients, steps, notes, average rating, and source attribution
