@@ -9,6 +9,9 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// Build a `fond` command pointed at a temp dir.
 fn fond(tmp: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("fond").unwrap();
@@ -21,6 +24,24 @@ fn write_fixture(tmp: &TempDir, name: &str, content: &str) {
     let recipes = tmp.path().join("recipes");
     fs::create_dir_all(&recipes).unwrap();
     fs::write(recipes.join(name), content).unwrap();
+}
+
+#[cfg(unix)]
+fn write_fake_tesseract(tmp: &TempDir, ocr_text: &str) -> std::path::PathBuf {
+    let script_path = tmp.path().join("fake-tesseract.sh");
+    let text_path = tmp.path().join("fake-ocr-output.txt");
+    fs::write(&text_path, ocr_text).unwrap();
+
+    let script = format!(
+        "#!/bin/sh\nset -eu\noutput_base=\"$2\"\ncat \"{}\" > \"${{output_base}}.txt\"\n",
+        text_path.display()
+    );
+    fs::write(&script_path, script).unwrap();
+
+    let mut perms = fs::metadata(&script_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script_path, perms).unwrap();
+    script_path
 }
 
 const CHICKEN_COOK: &str = "\
@@ -1014,6 +1035,7 @@ fn import_help_shows_paprika_subcommand() {
         .assert()
         .success()
         .stdout(predicate::str::contains("paprika"))
+        .stdout(predicate::str::contains("photo"))
         .stdout(predicate::str::contains("url"));
 }
 
@@ -1054,6 +1076,91 @@ fn import_url_help_shows_options() {
         .success()
         .stdout(predicate::str::contains("dry-run"))
         .stdout(predicate::str::contains("URL"));
+}
+
+#[cfg(unix)]
+#[test]
+fn import_photo_dry_run_reports_queued() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    let image = tmp.path().join("recipe-card.png");
+    fs::write(&image, b"not-a-real-image").unwrap();
+    let fake_tesseract = write_fake_tesseract(
+        &tmp,
+        "Weekend Pancakes\nIngredients\n2 cups flour\n1 cup milk\nDirections\nMix everything.\nCook on a griddle.\n",
+    );
+
+    fond(&tmp)
+        .env("FOND_TESSERACT_BIN", &fake_tesseract)
+        .args(["import", "photo", image.to_str().unwrap(), "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[dry-run] Queued:   1 recipe(s)"))
+        .stdout(predicate::str::contains("Weekend Pancakes"));
+
+    fond(&tmp)
+        .args(["review", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No queued review drafts."));
+}
+
+#[cfg(unix)]
+#[test]
+fn import_photo_queues_and_accepts_review() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    let image = tmp.path().join("soup-card.png");
+    fs::write(&image, b"not-a-real-image").unwrap();
+    let fake_tesseract = write_fake_tesseract(
+        &tmp,
+        "Grandma Soup\nIngredients\n1 onion\n4 cups broth\nDirections\nSimmer the soup.\nServe hot.\n",
+    );
+
+    let import_output = fond(&tmp)
+        .env("FOND_TESSERACT_BIN", &fake_tesseract)
+        .args(["--json", "import", "photo", image.to_str().unwrap()])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let import_json: serde_json::Value =
+        serde_json::from_slice(&import_output).expect("valid JSON import report");
+
+    assert_eq!(import_json["queued"], 1);
+    let review_id = import_json["details"][0]["review_id"]
+        .as_str()
+        .expect("review id in queued import report")
+        .to_string();
+
+    fond(&tmp)
+        .args(["review", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Grandma Soup"));
+
+    fond(&tmp)
+        .args(["review", "accept", &review_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Imported: Grandma Soup"));
+
+    assert!(
+        tmp.path()
+            .join("recipes")
+            .join("grandma-soup.cook")
+            .exists()
+    );
+    assert!(tmp.path().join("photos").join("review").exists());
+
+    fond(&tmp)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Grandma Soup"));
 }
 
 // ──────────────────────────────────────────────────────────────

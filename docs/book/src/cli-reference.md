@@ -77,6 +77,37 @@ fond import url https://www.seriouseats.com/chicken-adobo-recipe
 fond import url https://example.com/recipe --dry-run
 ```
 
+### `fond import photo <path>`
+
+OCR a local recipe photo or scanned page into a queued Cooklang draft.
+
+```bash
+fond import photo ~/Downloads/grandma-card.jpg
+fond import photo ~/Downloads/printed-recipe.png --dry-run
+```
+
+Printed recipes are the primary target. Handwriting is best-effort and always review-gated.
+
+### `fond review list`
+
+List pending OCR/import drafts that still need human review.
+
+### `fond review show <id>`
+
+Show one queued draft, including its Cooklang draft, warnings, and raw OCR text.
+
+### `fond review edit <id>`
+
+Open a queued draft in your editor so you can fix the Cooklang before importing it.
+
+### `fond review accept <id>`
+
+Write the queued draft to `recipes/` and index it as a normal recipe.
+
+### `fond review reject <id>`
+
+Reject a queued draft without importing it.
+
 ### `fond export`
 
 Export recipes to JSON or Paprika format.

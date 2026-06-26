@@ -43,6 +43,7 @@ impl FondPaths {
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.data_dir)?;
         std::fs::create_dir_all(self.data_dir.join("recipes"))?;
+        std::fs::create_dir_all(self.data_dir.join("photos").join("review"))?;
         std::fs::create_dir_all(&self.config_dir)?;
         Ok(())
     }
