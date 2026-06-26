@@ -1,0 +1,36 @@
+[package]
+name = "fond-ffi"
+description = "UniFFI bindings exposing fond-core to Swift and other foreign languages"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+
+[lib]
+# `lib` for in-tree consumers and tests, `staticlib`/`cdylib` for the
+# UniFFI-generated foreign-language bindings (Swift XCFramework).
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "fond_ffi"
+
+[[bin]]
+# Standalone binding generator used by apple/build-xcframework.sh.
+name = "uniffi-bindgen"
+required-features = ["bindgen"]
+
+[features]
+# The bindgen CLI pulls in extra deps, so it is opt-in.
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+fond-domain.workspace = true
+fond-core.workspace = true
+fond-store.workspace = true
+fond-timeline.workspace = true
+uniffi = { workspace = true }
+thiserror.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,42 @@
+name: FondApp
+options:
+  bundleIdPrefix: dev.kafkade.fond
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+
+packages:
+  FondKit:
+    path: ../FondKit
+
+targets:
+  Fond:
+    type: application
+    # Single multiplatform target: builds natively for both iOS and macOS.
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: Sources
+      # Bundle the sample .cook files as a folder reference; the app seeds and
+      # reindexes them on first launch.
+      - path: ../SampleData/recipes
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: FondKit
+        product: FondKit
+    settings:
+      base:
+        PRODUCT_NAME: Fond
+        PRODUCT_BUNDLE_IDENTIFIER: dev.kafkade.fond
+        MARKETING_VERSION: "0.4.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Fond
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.food-and-drink"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # Local PoC: no signing team required to build/run.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
