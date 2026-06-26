@@ -1,6 +1,6 @@
 # Importing Recipes
 
-fond can import recipes from two sources: Paprika archives and websites with schema.org markup.
+fond can import recipes from three sources: Paprika archives, websites with schema.org markup, and local photo/scanned images.
 
 ## From Paprika
 
@@ -71,10 +71,48 @@ Any website with schema.org Recipe markup works, including:
 fond import url https://example.com/recipe --dry-run
 ```
 
+## From Photos or Scans
+
+fond can OCR a local recipe photo or scanned page into an editable Cooklang draft.
+
+```bash
+fond import photo ~/Downloads/grandma-card.jpg
+fond import photo ~/Downloads/printed-recipe.png --dry-run
+```
+
+### Behavior
+
+- **Printed-first**: clean printed cards/pages are the primary target.
+- **Handwriting is best-effort**: handwritten cards are supported, but usually need more cleanup.
+- **Never auto-saves**: OCR imports always land in the review queue first.
+- **Offline-first**: OCR runs locally through a Tesseract-compatible binary.
+
+### Review Queue
+
+After OCR import, inspect and finalize the draft before writing a canonical `.cook` file:
+
+```bash
+fond review list
+fond review show <review-id>
+fond review edit <review-id>
+fond review accept <review-id>
+```
+
+Reject a bad draft without importing it:
+
+```bash
+fond review reject <review-id>
+```
+
+### OCR Requirements
+
+fond expects a local `tesseract` binary on your `PATH`. If it lives elsewhere, point fond at it with `FOND_TESSERACT_BIN=/path/to/tesseract`.
+
 ## Tips
 
 - Use `fond list` after importing to verify your recipes
 - Use `fond view <slug>` to check the conversion quality
+- Use `fond review edit <id>` to clean up OCR drafts before accepting them
 - Imported recipes are regular `.cook` files — edit them freely
 - Run `fond reindex` if you ever need to rebuild the database
 

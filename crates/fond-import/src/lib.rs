@@ -10,6 +10,7 @@
 //! calling code handles file writing and indexing.
 
 mod error;
+pub mod ocr;
 pub mod paprika;
 mod pipeline;
 pub mod schema_org;

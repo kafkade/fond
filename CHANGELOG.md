@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fond-scrape` crate: isolated HTTP client (`reqwest`-based) with cookie jar support and OS keychain credential storage (`keyring`) for future authenticated import sources
 - USDA FoodData Central nutrition subset: 7,108 common cooking ingredients with per-100g macros (kcal, protein, fat, carbs, fiber, sugar, sodium) for future informational nutrition estimates
 - Nutrition estimates: `fond nutrition <slug>` shows per-ingredient and total estimated nutrition facts using USDA data, with coverage %, confidence scoring, and aggressive rounding to prevent false precision
+- OCR photo import: `fond import photo <path>` extracts local recipe images into editable Cooklang drafts with `--dry-run` preview for printed-first workflows
+- Import review queue: `fond review list|show|edit|accept|reject` lets users inspect OCR drafts, fix them in `$EDITOR`, and only write `.cook` files after explicit acceptance
 
 ### Changed
 

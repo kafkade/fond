@@ -9,9 +9,13 @@ use clap_complete::Shell;
 use comfy_table::{ContentArrangement, Table};
 use fond_domain::{RecipeFilter, escape_fts5_query};
 use fond_import::paprika;
-use fond_store::{FondDb, FondPaths, RecipeRepository};
+use fond_store::{
+    FondDb, FondPaths, ImportReviewRecord, ImportReviewRepository, NewImportReview,
+    RecipeRepository,
+};
 use serde::Serialize;
 
+mod ocr;
 mod tui;
 
 /// fond — a private, local-first personal cooking & recipe manager.
@@ -181,6 +185,12 @@ enum Commands {
     Import {
         #[command(subcommand)]
         source: ImportSource,
+    },
+
+    /// Review queued import drafts before saving them as recipes.
+    Review {
+        #[command(subcommand)]
+        action: ReviewAction,
     },
 
     /// Export recipes to JSON or Paprika format.
@@ -494,6 +504,50 @@ enum ImportSource {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Import a recipe from a local photo or scanned image.
+    Photo {
+        /// Path to the image file
+        path: PathBuf,
+
+        /// Preview what would be queued without writing review data
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReviewAction {
+    /// List pending review drafts.
+    List,
+
+    /// Show a queued draft in detail.
+    Show {
+        /// Review item ID
+        id: String,
+    },
+
+    /// Edit a queued Cooklang draft in your editor.
+    Edit {
+        /// Review item ID
+        id: String,
+    },
+
+    /// Accept a queued draft and write it as a recipe.
+    Accept {
+        /// Review item ID
+        id: String,
+    },
+
+    /// Reject a queued draft.
+    Reject {
+        /// Review item ID
+        id: String,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -567,6 +621,14 @@ fn main() -> Result<()> {
                 cmd_import_paprika(&paths, &path, dry_run, &fmt)
             }
             ImportSource::Url { url, dry_run } => cmd_import_url(&paths, &url, dry_run, &fmt),
+            ImportSource::Photo { path, dry_run } => cmd_import_photo(&paths, &path, dry_run, &fmt),
+        },
+        Commands::Review { action } => match action {
+            ReviewAction::List => cmd_review_list(&paths, &fmt),
+            ReviewAction::Show { id } => cmd_review_show(&paths, &id, &fmt),
+            ReviewAction::Edit { id } => cmd_review_edit(&paths, &id),
+            ReviewAction::Accept { id } => cmd_review_accept(&paths, &id, &fmt),
+            ReviewAction::Reject { id, yes } => cmd_review_reject(&paths, &id, yes, &fmt),
         },
         Commands::Export {
             export_format,
@@ -629,10 +691,22 @@ fn recipes_dir(paths: &FondPaths) -> PathBuf {
     paths.data_dir.join("recipes")
 }
 
-fn content_hash(content: &str) -> String {
+fn review_assets_dir(paths: &FondPaths) -> PathBuf {
+    paths.data_dir.join("photos").join("review")
+}
+
+fn hash_value<T: Hash + ?Sized>(value: &T) -> String {
     let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
+    value.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+fn content_hash(content: &str) -> String {
+    hash_value(content)
+}
+
+fn bytes_hash(bytes: &[u8]) -> String {
+    hash_value(bytes)
 }
 
 fn open_editor(file_path: &std::path::Path) -> Result<bool> {
@@ -677,6 +751,7 @@ fn cmd_init(paths: &FondPaths) -> Result<()> {
 
     println!("Initialised fond at {}", paths.data_dir.display());
     println!("  recipes/  — your .cook recipe files");
+    println!("  photos/   — review/import image assets");
     println!("  config/   — fond configuration");
     Ok(())
 }
@@ -3525,10 +3600,93 @@ fn cmd_import_url(paths: &FondPaths, url: &str, dry_run: bool, fmt: &OutputForma
     Ok(())
 }
 
+fn cmd_import_photo(
+    paths: &FondPaths,
+    source_path: &std::path::Path,
+    dry_run: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    if !source_path.exists() {
+        anyhow::bail!("file not found: {}", source_path.display());
+    }
+    if !source_path.is_file() {
+        anyhow::bail!("expected an image file, got: {}", source_path.display());
+    }
+    if !is_supported_image_path(source_path) {
+        anyhow::bail!(
+            "unsupported image format for OCR: {}",
+            source_path.display()
+        );
+    }
+
+    let source_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("imported-image")
+        .to_string();
+
+    let ocr_text = ocr::extract_text(source_path)
+        .with_context(|| format!("failed to OCR {}", source_path.display()))?;
+    let draft = fond_import::ocr::build_review_draft(&ocr_text, &source_name);
+
+    let mut report = fond_import::ImportReport::new();
+    let reason = queue_reason(&draft.warnings);
+
+    if dry_run {
+        report.add(fond_import::ImportResult::Queued {
+            title: draft.title.clone(),
+            review_id: None,
+            reason,
+        });
+        return print_import_report_for_format(fmt, &report, true);
+    }
+
+    let asset_path = copy_review_asset(paths, source_path)?;
+    let db = open_db(paths)?;
+    let review_repo = ImportReviewRepository::new(&db);
+    let created = review_repo.create(&NewImportReview {
+        source_type: "ocr-photo".to_string(),
+        source_name,
+        asset_path,
+        title: draft.title.clone(),
+        draft_cook_text: draft.cook_text,
+        ocr_text: draft.raw_text,
+        warnings: draft.warnings.clone(),
+    })?;
+
+    report.add(fond_import::ImportResult::Queued {
+        title: created.title,
+        review_id: Some(created.id),
+        reason,
+    });
+
+    print_import_report_for_format(fmt, &report, false)
+}
+
 /// Fetch HTML from a URL using the fond-scrape HTTP client.
 fn fetch_url(url: &str) -> Result<String> {
     let client = fond_scrape::ScrapeClient::new().context("failed to build HTTP client")?;
     client.fetch_html(url).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+fn print_import_report_for_format(
+    fmt: &OutputFormat,
+    report: &fond_import::ImportReport,
+    dry_run: bool,
+) -> Result<()> {
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(report)?);
+        }
+        OutputFormat::Table => {
+            print_import_report(report, dry_run);
+        }
+    }
+    Ok(())
 }
 
 fn print_import_report(report: &fond_import::ImportReport, dry_run: bool) {
@@ -3536,6 +3694,9 @@ fn print_import_report(report: &fond_import::ImportReport, dry_run: bool) {
 
     if report.imported > 0 {
         println!("{prefix}Imported: {} recipe(s)", report.imported);
+    }
+    if report.queued > 0 {
+        println!("{prefix}Queued:   {} recipe(s)", report.queued);
     }
     if report.skipped > 0 {
         println!("{prefix}Skipped:  {} recipe(s)", report.skipped);
@@ -3548,6 +3709,17 @@ fn print_import_report(report: &fond_import::ImportReport, dry_run: bool) {
     // Show details for skipped/failed
     for detail in &report.details {
         match detail {
+            fond_import::ImportResult::Queued {
+                title,
+                review_id,
+                reason,
+            } => {
+                let suffix = review_id
+                    .as_ref()
+                    .map(|id| format!(" (review id: {id})"))
+                    .unwrap_or_default();
+                println!("  Queued:  {title} — {reason}{suffix}");
+            }
             fond_import::ImportResult::Skipped { title, reason } => {
                 eprintln!("  Skipped: {title} — {reason}");
             }
@@ -3556,6 +3728,334 @@ fn print_import_report(report: &fond_import::ImportReport, dry_run: bool) {
             }
             _ => {}
         }
+    }
+}
+
+fn cmd_review_list(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let repo = ImportReviewRepository::new(&db);
+    let items = repo.list_pending().context("failed to list review queue")?;
+
+    match fmt {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&items)?),
+        OutputFormat::Table => {
+            if items.is_empty() {
+                println!("No queued review drafts.");
+            } else {
+                let mut table = Table::new();
+                table.set_content_arrangement(ContentArrangement::Dynamic);
+                table.set_header(vec!["ID", "Title", "Source", "Warnings", "Created"]);
+                for item in &items {
+                    table.add_row(vec![
+                        item.id.clone(),
+                        item.title.clone(),
+                        item.source_name.clone(),
+                        item.warnings.len().to_string(),
+                        item.created_at.clone(),
+                    ]);
+                }
+                println!("{table}");
+                println!("{} pending draft(s)", items.len());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_review_show(paths: &FondPaths, id: &str, fmt: &OutputFormat) -> Result<()> {
+    let item = load_review_item(paths, id)?;
+
+    match fmt {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&item)?),
+        OutputFormat::Table => {
+            println!("Review ID: {}", item.id);
+            println!("Title: {}", item.title);
+            println!("Status: {}", item.status);
+            println!("Source: {}", item.source_name);
+            if !item.asset_path.is_empty() {
+                println!("Asset: {}", item.asset_path);
+            }
+            if !item.warnings.is_empty() {
+                println!("\nWarnings:");
+                for warning in &item.warnings {
+                    println!("  • {warning}");
+                }
+            }
+            println!("\n--- Cooklang draft ---\n");
+            println!("{}", item.draft_cook_text.trim_end());
+            if !item.ocr_text.trim().is_empty() {
+                println!("\n--- Raw OCR text ---\n");
+                println!("{}", item.ocr_text.trim_end());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_review_edit(paths: &FondPaths, id: &str) -> Result<()> {
+    let item = load_pending_review_item(paths, id)?;
+    let temp_path = paths.data_dir.join(format!("review-edit-{id}.cook"));
+
+    std::fs::write(&temp_path, &item.draft_cook_text)
+        .with_context(|| format!("failed to write {}", temp_path.display()))?;
+
+    let opened = open_editor(&temp_path)?;
+    let updated = std::fs::read_to_string(&temp_path)
+        .with_context(|| format!("failed to read {}", temp_path.display()))?;
+    let _ = std::fs::remove_file(&temp_path);
+
+    if !opened {
+        anyhow::bail!("editor exited with an error");
+    }
+
+    if updated == item.draft_cook_text {
+        println!("No changes saved for review draft {id}.");
+        return Ok(());
+    }
+
+    let title = extract_title_from_cook_text(&updated).unwrap_or(item.title);
+    let db = open_db(paths)?;
+    let repo = ImportReviewRepository::new(&db);
+    if !repo
+        .update_draft(id, &title, &updated)
+        .context("failed to update queued draft")?
+    {
+        anyhow::bail!("review draft '{id}' is no longer pending");
+    }
+
+    if let Err(err) = fond_domain::parse_cook(&updated, &slug_or_fallback(&title)) {
+        eprintln!(
+            "Saved draft {id}, but it still has parse issues and may need more editing before accept.\n  Error: {err}"
+        );
+    } else {
+        println!("Updated review draft {id}.");
+    }
+
+    Ok(())
+}
+
+fn cmd_review_accept(paths: &FondPaths, id: &str, fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let item = load_pending_review_item(paths, id)?;
+    let provisional_stem = slug_or_fallback(&item.title);
+    let parsed = fond_domain::parse_cook(&item.draft_cook_text, &provisional_stem).map_err(|e| {
+        anyhow::anyhow!("queued draft could not be parsed as Cooklang: {e}. Use `fond review edit {id}` to fix it")
+    })?;
+
+    let db = open_db(paths)?;
+    let review_repo = ImportReviewRepository::new(&db);
+    let recipe_repo = RecipeRepository::new(&db);
+    let existing = recipe_repo
+        .list_recipes()
+        .context("failed to list existing recipes")?;
+    let existing_slugs: Vec<String> = existing.iter().map(|recipe| recipe.slug.clone()).collect();
+    let final_slug = resolve_slug_collision(&parsed.slug, &existing_slugs);
+    let file_name = format!("{final_slug}.cook");
+    let cook_text = item.draft_cook_text.clone();
+    let recipe = fond_domain::Recipe {
+        slug: final_slug.clone(),
+        raw_source: Some(cook_text.clone()),
+        ..parsed
+    };
+
+    let dest = recipes_dir(paths).join(&file_name);
+    std::fs::write(&dest, &cook_text)
+        .with_context(|| format!("failed to write {}", dest.display()))?;
+    let hash = content_hash(&cook_text);
+    recipe_repo
+        .upsert_recipe(&file_name, &recipe, &hash)
+        .with_context(|| format!("failed to index {}", file_name))?;
+
+    if !review_repo
+        .mark_accepted(id, &final_slug, &file_name)
+        .context("failed to update review queue status")?
+    {
+        anyhow::bail!("review draft '{id}' is no longer pending");
+    }
+
+    #[derive(Serialize)]
+    struct AcceptedReview<'a> {
+        review_id: &'a str,
+        title: &'a str,
+        slug: &'a str,
+        file_name: &'a str,
+    }
+
+    let accepted = AcceptedReview {
+        review_id: id,
+        title: &recipe.title,
+        slug: &final_slug,
+        file_name: &file_name,
+    };
+
+    match fmt {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&accepted)?),
+        OutputFormat::Table => {
+            println!("Accepted review draft {id}.");
+            println!("Imported: {} ({})", recipe.title, final_slug);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_review_reject(paths: &FondPaths, id: &str, yes: bool, fmt: &OutputFormat) -> Result<()> {
+    let item = load_pending_review_item(paths, id)?;
+    if !yes && !confirm(&format!("Reject queued draft '{}' ?", item.title)) {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let db = open_db(paths)?;
+    let repo = ImportReviewRepository::new(&db);
+    if !repo
+        .mark_rejected(id)
+        .context("failed to reject review draft")?
+    {
+        anyhow::bail!("review draft '{id}' is no longer pending");
+    }
+
+    #[derive(Serialize)]
+    struct RejectedReview<'a> {
+        review_id: &'a str,
+        title: &'a str,
+        status: &'static str,
+    }
+
+    let rejected = RejectedReview {
+        review_id: id,
+        title: &item.title,
+        status: "rejected",
+    };
+
+    match fmt {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&rejected)?),
+        OutputFormat::Table => println!("Rejected review draft {id} ({}).", item.title),
+    }
+
+    Ok(())
+}
+
+fn load_review_item(paths: &FondPaths, id: &str) -> Result<ImportReviewRecord> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+    let db = open_db(paths)?;
+    let repo = ImportReviewRepository::new(&db);
+    repo.get(id)
+        .context("failed to load review queue item")?
+        .with_context(|| format!("no review draft found with id '{id}'"))
+}
+
+fn load_pending_review_item(paths: &FondPaths, id: &str) -> Result<ImportReviewRecord> {
+    let item = load_review_item(paths, id)?;
+    if item.status != "pending" {
+        anyhow::bail!(
+            "review draft '{id}' is not pending (status: {})",
+            item.status
+        );
+    }
+    Ok(item)
+}
+
+fn queue_reason(warnings: &[String]) -> String {
+    if warnings.is_empty() {
+        "queued for manual review".to_string()
+    } else {
+        format!("queued for manual review ({} warning(s))", warnings.len())
+    }
+}
+
+fn is_supported_image_path(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff")
+    )
+}
+
+fn copy_review_asset(paths: &FondPaths, source_path: &std::path::Path) -> Result<String> {
+    let bytes = std::fs::read(source_path)
+        .with_context(|| format!("failed to read {}", source_path.display()))?;
+    let hash = bytes_hash(&bytes);
+    let ext = source_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_else(|| "img".to_string());
+
+    let dir = review_assets_dir(paths);
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+
+    let file_name = format!("{hash}.{ext}");
+    let dest = dir.join(&file_name);
+    if !dest.exists() {
+        std::fs::write(&dest, bytes)
+            .with_context(|| format!("failed to write {}", dest.display()))?;
+    }
+
+    Ok(format!("photos/review/{file_name}"))
+}
+
+fn extract_title_from_cook_text(content: &str) -> Option<String> {
+    let mut lines = content.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        if let Some((key, value)) = trimmed.split_once(':')
+            && key.trim().eq_ignore_ascii_case("title")
+        {
+            let title = value.trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn slug_or_fallback(title: &str) -> String {
+    let slug = fond_domain::slugify(title);
+    if slug.is_empty() {
+        "imported-recipe".to_string()
+    } else {
+        slug
+    }
+}
+
+fn resolve_slug_collision(slug: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|existing_slug| existing_slug == slug) {
+        return slug.to_string();
+    }
+
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{slug}-{suffix}");
+        if !existing
+            .iter()
+            .any(|existing_slug| existing_slug == &candidate)
+        {
+            return candidate;
+        }
+        suffix += 1;
     }
 }
 
