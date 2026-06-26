@@ -820,6 +820,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 
 - **Goal:** Optional, user-controlled sync across devices.
 - **Recommendation:** Evaluate **file-based sync** (the `.cook` files already sync via Dropbox/Syncthing/git) **before** CRDTs; if relational overlays need merging, evaluate `cr-sqlite` (as toku did). `[Validation Required]`
+- **Decided:** see [ADR-012](docs/adr/012-sync-multi-device.md) and the [sync research](docs/research/sync-multi-device-strategy.md) — file-sync first for `.cook`+photos (Tier 1, **Validated**); authored-overlay sync deferred (prefer sidecar-export-over-file-sync, `cr-sqlite` only as fallback), gated on data-model stability.
 - **Risks:** Conflict resolution (🔴). Deferred deliberately.
 
 ### Phase 8 — Moonshots *(Research)*
@@ -1099,7 +1100,7 @@ A consolidated record of every load-bearing decision. One row, one decision, one
 | D15 | Photo storage | Content-addressed filesystem alongside files | Cooklang convention, ownership | `[Validated]` |
 | D16 | License | MIT | Adoption + portfolio consistency (§11) | `[Validated]` |
 | D17 | Web stack (Ph4) | Axum + HTMX over `fond-core` | Light, server-rendered, same core | `[Validated]` |
-| D18 | Sync (Ph7) | File-sync first; cr-sqlite only if overlays need it | Defer CRDT complexity; leverage owned files | `[Validation Required]` |
+| D18 | Sync (Ph7) | File-sync first; cr-sqlite only if overlays need it ([ADR-012](docs/adr/012-sync-multi-device.md)) | Defer CRDT complexity; leverage owned files | File-sync `[Validated]`; overlay/CRDT `[Validation Required]` |
 | D19 | Native bridge (Ph5) | UniFFI → SwiftUI | Reuse core on Apple platforms | `[Validated]` |
 | D20 | Distribution/docs | cargo-dist + mdBook + GitHub Actions | Cross-platform binaries, free OSS CI | `[Validated]` |
 
