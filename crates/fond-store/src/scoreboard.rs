@@ -66,17 +66,17 @@ impl<'a> ScoreboardRepository<'a> {
         let sql = if since.is_some() {
             "SELECT r.slug, r.title, COUNT(*) as cnt
              FROM cook_logs cl
-             JOIN recipes r ON r.id = cl.recipe_id
+             JOIN recipes r ON r.slug = cl.recipe_slug
              WHERE cl.finished_at >= ?1
-             GROUP BY cl.recipe_id
+             GROUP BY cl.recipe_slug
              ORDER BY cnt DESC
              LIMIT ?2"
         } else {
             "SELECT r.slug, r.title, COUNT(*) as cnt
              FROM cook_logs cl
-             JOIN recipes r ON r.id = cl.recipe_id
+             JOIN recipes r ON r.slug = cl.recipe_slug
              WHERE ?1 IS NULL
-             GROUP BY cl.recipe_id
+             GROUP BY cl.recipe_slug
              ORDER BY cnt DESC
              LIMIT ?2"
         };
@@ -112,9 +112,9 @@ impl<'a> ScoreboardRepository<'a> {
                     AVG(CAST(rt.score AS REAL)) as avg_score,
                     COUNT(*) as cnt
              FROM ratings rt
-             JOIN recipes r ON r.id = rt.recipe_id
+             JOIN recipes r ON r.slug = rt.recipe_slug
              WHERE rt.updated_at >= ?1
-             GROUP BY rt.recipe_id
+             GROUP BY rt.recipe_slug
              ORDER BY avg_score DESC, cnt DESC
              LIMIT ?2"
         } else {
@@ -122,9 +122,9 @@ impl<'a> ScoreboardRepository<'a> {
                     AVG(CAST(rt.score AS REAL)) as avg_score,
                     COUNT(*) as cnt
              FROM ratings rt
-             JOIN recipes r ON r.id = rt.recipe_id
+             JOIN recipes r ON r.slug = rt.recipe_slug
              WHERE ?1 IS NULL
-             GROUP BY rt.recipe_id
+             GROUP BY rt.recipe_slug
              ORDER BY avg_score DESC, cnt DESC
              LIMIT ?2"
         };
@@ -168,19 +168,19 @@ impl<'a> ScoreboardRepository<'a> {
                        cl.steps_completed || '/' || cl.total_steps || ' steps' as detail,
                        cl.finished_at as timestamp
                 FROM cook_logs cl
-                JOIN recipes r ON r.id = cl.recipe_id
+                JOIN recipes r ON r.slug = cl.recipe_slug
               UNION ALL
                 SELECT r.slug, r.title, 'noted' as activity_type,
                        SUBSTR(n.body, 1, 60) as detail,
                        n.created_at as timestamp
                 FROM notes n
-                JOIN recipes r ON r.id = n.recipe_id
+                JOIN recipes r ON r.slug = n.recipe_slug
               UNION ALL
                 SELECT r.slug, r.title, 'rated' as activity_type,
                        rt.score || '/5' as detail,
                        rt.updated_at as timestamp
                 FROM ratings rt
-                JOIN recipes r ON r.id = rt.recipe_id
+                JOIN recipes r ON r.slug = rt.recipe_slug
              )
              {since_clause}
              ORDER BY timestamp DESC
@@ -226,7 +226,7 @@ mod tests {
     use super::*;
     use crate::{CookLogRepository, NewCookLog, NoteRepository, RatingRepository};
 
-    fn setup_db() -> (FondDb, i64) {
+    fn setup_db() -> (FondDb, String) {
         let db = FondDb::open_memory().unwrap();
         let conn = db.conn();
         conn.execute(
@@ -234,8 +234,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let recipe_id = conn.last_insert_rowid();
-        (db, recipe_id)
+        (db, "adobo".to_string())
     }
 
     #[test]
@@ -250,13 +249,13 @@ mod tests {
 
     #[test]
     fn scoreboard_most_cooked() {
-        let (db, recipe_id) = setup_db();
+        let (db, slug) = setup_db();
 
         let log_repo = CookLogRepository::new(&db);
         for i in 0..3 {
             log_repo
                 .save(&NewCookLog {
-                    recipe_id,
+                    recipe_slug: slug.clone(),
                     user_id: Some(1),
                     started_at: format!("2025-07-{:02}T17:00:00", 20 + i),
                     finished_at: format!("2025-07-{:02}T19:00:00", 20 + i),
@@ -276,10 +275,10 @@ mod tests {
 
     #[test]
     fn scoreboard_highest_rated() {
-        let (db, recipe_id) = setup_db();
+        let (db, slug) = setup_db();
 
         let rating_repo = RatingRepository::new(&db);
-        rating_repo.rate(recipe_id, Some(1), 5).unwrap();
+        rating_repo.rate(&slug, Some(1), 5).unwrap();
 
         let repo = ScoreboardRepository::new(&db);
         let sb = repo.scoreboard(10, None).unwrap();
@@ -289,12 +288,12 @@ mod tests {
 
     #[test]
     fn scoreboard_recent_activity() {
-        let (db, recipe_id) = setup_db();
+        let (db, slug) = setup_db();
 
         let log_repo = CookLogRepository::new(&db);
         log_repo
             .save(&NewCookLog {
-                recipe_id,
+                recipe_slug: slug.clone(),
                 user_id: Some(1),
                 started_at: "2025-07-20T17:00:00".into(),
                 finished_at: "2025-07-20T19:00:00".into(),
@@ -305,10 +304,10 @@ mod tests {
             .unwrap();
 
         let note_repo = NoteRepository::new(&db);
-        note_repo.add(recipe_id, Some(1), "Perfect adobo!").unwrap();
+        note_repo.add(&slug, Some(1), "Perfect adobo!").unwrap();
 
         let rating_repo = RatingRepository::new(&db);
-        rating_repo.rate(recipe_id, Some(1), 4).unwrap();
+        rating_repo.rate(&slug, Some(1), 4).unwrap();
 
         let repo = ScoreboardRepository::new(&db);
         let sb = repo.scoreboard(10, None).unwrap();
@@ -317,12 +316,12 @@ mod tests {
 
     #[test]
     fn scoreboard_since_filter() {
-        let (db, recipe_id) = setup_db();
+        let (db, slug) = setup_db();
 
         let log_repo = CookLogRepository::new(&db);
         log_repo
             .save(&NewCookLog {
-                recipe_id,
+                recipe_slug: slug.clone(),
                 user_id: Some(1),
                 started_at: "2025-01-01T17:00:00".into(),
                 finished_at: "2025-01-01T19:00:00".into(),

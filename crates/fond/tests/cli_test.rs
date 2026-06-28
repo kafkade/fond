@@ -2248,7 +2248,7 @@ fn note_add_json() {
 
     let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(parsed["note"], "Great dish!");
-    assert!(parsed["id"].is_number());
+    assert!(parsed["id"].is_string());
 }
 
 #[test]
@@ -2267,7 +2267,7 @@ fn note_delete() {
         .stdout
         .clone();
     let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
-    let note_id = parsed["id"].as_i64().unwrap().to_string();
+    let note_id = parsed["id"].as_str().unwrap().to_string();
 
     // Delete it
     fond(&tmp)

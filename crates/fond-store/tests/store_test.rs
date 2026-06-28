@@ -460,6 +460,87 @@ fn reindex_preserves_overlay_tables() {
     assert_eq!(name, "Alice");
 }
 
+#[test]
+fn authored_overlay_survives_reindex() {
+    // Issue #80: notes/ratings/cook_logs are anchored by recipe_slug + UUIDv7,
+    // so they must survive the DELETE-and-rebuild reindex (no FK cascade wipe).
+    let tmp = TempDir::new().unwrap();
+    let recipes_dir = tmp.path().join("recipes");
+    setup_recipes(&recipes_dir);
+    let db_path = tmp.path().join("fond.db");
+
+    let db = FondDb::open(&db_path).unwrap();
+    reindex(&db, &recipes_dir).unwrap();
+
+    let slug = "classic-chicken-adobo";
+    let notes = fond_store::NoteRepository::new(&db);
+    let ratings = fond_store::RatingRepository::new(&db);
+    let logs = fond_store::CookLogRepository::new(&db);
+
+    let note_id = notes.add(slug, Some(1), "Best adobo ever").unwrap();
+    ratings.rate(slug, Some(1), 5).unwrap();
+    logs.save(&fond_store::NewCookLog {
+        recipe_slug: slug.to_string(),
+        user_id: Some(1),
+        started_at: "2025-07-20T17:00:00".into(),
+        finished_at: "2025-07-20T18:00:00".into(),
+        steps_completed: 4,
+        total_steps: 4,
+        notes: String::new(),
+    })
+    .unwrap();
+
+    // Rebuild the entire derived index (recipes get fresh rowids).
+    reindex(&db, &recipes_dir).unwrap();
+
+    let surviving_notes = notes.list_for_recipe(slug, Some(1)).unwrap();
+    assert_eq!(surviving_notes.len(), 1, "note should survive reindex");
+    assert_eq!(surviving_notes[0].id, note_id, "stable UUIDv7 id preserved");
+    assert_eq!(
+        ratings
+            .get_for_recipe(slug, Some(1))
+            .unwrap()
+            .unwrap()
+            .score,
+        5,
+        "rating should survive reindex"
+    );
+    assert_eq!(
+        logs.list_for_recipe(slug).unwrap().len(),
+        1,
+        "cook log should survive reindex"
+    );
+}
+
+#[test]
+fn overlay_resolves_after_fresh_db_rebuild() {
+    // Acceptance: copy .cook files to a "second machine", rebuild a fresh DB,
+    // and authored overlay (preloaded) still resolves to the right recipe.
+    let tmp = TempDir::new().unwrap();
+    let recipes_dir = tmp.path().join("recipes");
+    setup_recipes(&recipes_dir);
+    let db_path = tmp.path().join("fond.db");
+    let slug = "classic-chicken-adobo";
+
+    {
+        let db = FondDb::open(&db_path).unwrap();
+        reindex(&db, &recipes_dir).unwrap();
+        fond_store::RatingRepository::new(&db)
+            .rate(slug, Some(1), 4)
+            .unwrap();
+    }
+
+    // Simulate a fresh machine: drop the index, keep overlay payload by reopening.
+    let db = FondDb::open(&db_path).unwrap();
+    reindex(&db, &recipes_dir).unwrap();
+    let r = fond_store::RatingRepository::new(&db)
+        .get_for_recipe(slug, Some(1))
+        .unwrap()
+        .expect("rating resolves to the recipe after rebuild");
+    assert_eq!(r.score, 4);
+    assert_eq!(r.recipe_slug, slug);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Recovery: DB deletion + rebuild
 // ═══════════════════════════════════════════════════════════════════

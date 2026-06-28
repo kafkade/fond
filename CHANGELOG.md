@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Notes, ratings, and cook logs now survive `fond reindex` (and reindexing on another device): they are anchored to the recipe slug with stable UUIDv7 IDs instead of the device-specific database rowid, which previously caused them to be silently deleted on every reindex
 - Documented NYT Cooking and Cook's Illustrated/ATK scraping limitation: both services prohibit automated access in their ToS; Paprika bridge is the recommended import path
 - Due diligence: USDA FoodData Central download, subsetting methodology, license verification (public domain), and binary embedding size assessment (169 KB compressed)
 - Paprika import: `fond import paprika <path>` ingests `.paprikarecipes` / `.paprikarecipe` archives into `.cook` files with ingredient parsing, section headers, and provenance metadata

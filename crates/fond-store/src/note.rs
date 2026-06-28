@@ -2,8 +2,8 @@ use crate::{FondDb, StoreError};
 
 /// A note record from the database.
 pub struct NoteRecord {
-    pub id: i64,
-    pub recipe_id: i64,
+    pub id: String,
+    pub recipe_slug: String,
     pub user_id: Option<i64>,
     pub body: String,
     pub created_at: String,
@@ -19,31 +19,37 @@ impl<'a> NoteRepository<'a> {
         Self { db }
     }
 
-    /// Add a note to a recipe.
-    pub fn add(&self, recipe_id: i64, user_id: Option<i64>, body: &str) -> Result<i64, StoreError> {
+    /// Add a note to a recipe. Returns the generated UUIDv7 note id.
+    pub fn add(
+        &self,
+        recipe_slug: &str,
+        user_id: Option<i64>,
+        body: &str,
+    ) -> Result<String, StoreError> {
         let conn = self.db.conn();
+        let id = uuid::Uuid::now_v7().to_string();
         conn.execute(
-            "INSERT INTO notes (recipe_id, user_id, body) VALUES (?1, ?2, ?3)",
-            rusqlite::params![recipe_id, user_id, body],
+            "INSERT INTO notes (id, recipe_slug, user_id, body) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, recipe_slug, user_id, body],
         )
         .map_err(|e| StoreError::Database {
             message: format!("failed to save note: {e}"),
         })?;
-        Ok(conn.last_insert_rowid())
+        Ok(id)
     }
 
     /// List notes for a recipe, most recent first.
     pub fn list_for_recipe(
         &self,
-        recipe_id: i64,
+        recipe_slug: &str,
         user_id: Option<i64>,
     ) -> Result<Vec<NoteRecord>, StoreError> {
         let conn = self.db.conn();
         let mut stmt = conn
             .prepare(
-                "SELECT id, recipe_id, user_id, body, created_at
+                "SELECT id, recipe_slug, user_id, body, created_at
                  FROM notes
-                 WHERE recipe_id = ?1 AND (?2 IS NULL OR user_id = ?2)
+                 WHERE recipe_slug = ?1 AND (?2 IS NULL OR user_id = ?2)
                  ORDER BY created_at DESC",
             )
             .map_err(|e| StoreError::Database {
@@ -51,10 +57,10 @@ impl<'a> NoteRepository<'a> {
             })?;
 
         let rows = stmt
-            .query_map(rusqlite::params![recipe_id, user_id], |row| {
+            .query_map(rusqlite::params![recipe_slug, user_id], |row| {
                 Ok(NoteRecord {
                     id: row.get(0)?,
-                    recipe_id: row.get(1)?,
+                    recipe_slug: row.get(1)?,
                     user_id: row.get(2)?,
                     body: row.get(3)?,
                     created_at: row.get(4)?,
@@ -74,7 +80,7 @@ impl<'a> NoteRepository<'a> {
     }
 
     /// Delete a note by ID (only if owned by the given user).
-    pub fn delete(&self, note_id: i64, user_id: Option<i64>) -> Result<bool, StoreError> {
+    pub fn delete(&self, note_id: &str, user_id: Option<i64>) -> Result<bool, StoreError> {
         let conn = self.db.conn();
         let affected = conn
             .execute(
@@ -101,16 +107,15 @@ mod tests {
             [],
         )
         .unwrap();
-        let recipe_id = conn.last_insert_rowid();
 
         let repo = NoteRepository::new(&db);
-        let id = repo.add(recipe_id, Some(1), "Great recipe!").unwrap();
-        assert!(id > 0);
+        let id = repo.add("test", Some(1), "Great recipe!").unwrap();
+        assert!(!id.is_empty());
 
-        repo.add(recipe_id, Some(1), "Even better the second time")
+        repo.add("test", Some(1), "Even better the second time")
             .unwrap();
 
-        let notes = repo.list_for_recipe(recipe_id, Some(1)).unwrap();
+        let notes = repo.list_for_recipe("test", Some(1)).unwrap();
         assert_eq!(notes.len(), 2);
         let bodies: Vec<&str> = notes.iter().map(|n| n.body.as_str()).collect();
         assert!(bodies.contains(&"Great recipe!"));
@@ -126,13 +131,12 @@ mod tests {
             [],
         )
         .unwrap();
-        let recipe_id = conn.last_insert_rowid();
 
         let repo = NoteRepository::new(&db);
-        let id = repo.add(recipe_id, Some(1), "Delete me").unwrap();
-        assert!(repo.delete(id, Some(1)).unwrap());
+        let id = repo.add("test", Some(1), "Delete me").unwrap();
+        assert!(repo.delete(&id, Some(1)).unwrap());
 
-        let notes = repo.list_for_recipe(recipe_id, Some(1)).unwrap();
+        let notes = repo.list_for_recipe("test", Some(1)).unwrap();
         assert!(notes.is_empty());
     }
 
@@ -145,15 +149,14 @@ mod tests {
             [],
         )
         .unwrap();
-        let recipe_id = conn.last_insert_rowid();
 
         // Add another user
         conn.execute("INSERT INTO users (id, name) VALUES (2, 'other')", [])
             .unwrap();
 
         let repo = NoteRepository::new(&db);
-        let id = repo.add(recipe_id, Some(1), "My note").unwrap();
+        let id = repo.add("test", Some(1), "My note").unwrap();
         // User 2 can't delete user 1's note
-        assert!(!repo.delete(id, Some(2)).unwrap());
+        assert!(!repo.delete(&id, Some(2)).unwrap());
     }
 }
