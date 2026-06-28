@@ -258,7 +258,7 @@ async fn recipe_detail(
         let notes = {
             let note_repo = fond_store::NoteRepository::new(db);
             note_repo
-                .list_for_recipe(recipe.id, None)
+                .list_for_recipe(&recipe.slug, None)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|n| NoteView {
@@ -272,8 +272,8 @@ async fn recipe_detail(
         let rating = {
             let conn = db.conn();
             conn.query_row(
-                "SELECT AVG(CAST(score AS REAL)) FROM ratings WHERE recipe_id = ?1",
-                rusqlite::params![recipe.id],
+                "SELECT AVG(CAST(score AS REAL)) FROM ratings WHERE recipe_slug = ?1",
+                rusqlite::params![recipe.slug],
                 |row| row.get::<_, Option<f64>>(0),
             )
             .unwrap_or(None)

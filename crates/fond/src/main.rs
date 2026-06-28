@@ -252,7 +252,7 @@ enum Commands {
 
         /// Delete a note by ID
         #[arg(long)]
-        delete: Option<i64>,
+        delete: Option<String>,
     },
 
     /// Rate a recipe (1-5 stars), or show current rating.
@@ -2219,7 +2219,7 @@ fn cmd_cook(
         let now = chrono::Local::now();
         let started = now - chrono::Duration::seconds(cook_result.cook_duration.as_secs() as i64);
         let entry = fond_store::NewCookLog {
-            recipe_id: record.id,
+            recipe_slug: record.slug.clone(),
             user_id,
             started_at: started.format("%Y-%m-%dT%H:%M:%S").to_string(),
             finished_at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -2441,7 +2441,7 @@ fn cmd_note(
     paths: &FondPaths,
     slug: &str,
     text: &[String],
-    delete: Option<i64>,
+    delete: Option<String>,
     fmt: &OutputFormat,
 ) -> Result<()> {
     let db = open_db(paths)?;
@@ -2460,15 +2460,15 @@ fn cmd_note(
     // Delete mode
     if let Some(note_id) = delete {
         let deleted = note_repo
-            .delete(note_id, user_id)
+            .delete(&note_id, user_id)
             .context("failed to delete note")?;
         if deleted {
             match fmt {
-                OutputFormat::Json => println!(r#"{{"deleted": true, "id": {note_id}}}"#),
-                OutputFormat::Table => println!("Note #{note_id} deleted."),
+                OutputFormat::Json => println!(r#"{{"deleted": true, "id": "{note_id}"}}"#),
+                OutputFormat::Table => println!("Note {note_id} deleted."),
             }
         } else {
-            anyhow::bail!("note #{note_id} not found or not owned by you");
+            anyhow::bail!("note {note_id} not found or not owned by you");
         }
         return Ok(());
     }
@@ -2477,14 +2477,14 @@ fn cmd_note(
     if !text.is_empty() {
         let body = text.join(" ");
         let id = note_repo
-            .add(record.id, user_id, &body)
+            .add(&record.slug, user_id, &body)
             .context("failed to add note")?;
 
         match fmt {
             OutputFormat::Json => {
                 #[derive(Serialize)]
                 struct Added {
-                    id: i64,
+                    id: String,
                     recipe: String,
                     note: String,
                 }
@@ -2496,7 +2496,7 @@ fn cmd_note(
                 println!("{}", serde_json::to_string_pretty(&added)?);
             }
             OutputFormat::Table => {
-                println!("Note added to '{}' (#{id}).", record.title);
+                println!("Note added to '{}' ({id}).", record.title);
             }
         }
         return Ok(());
@@ -2504,14 +2504,14 @@ fn cmd_note(
 
     // List mode (no text, no delete)
     let notes = note_repo
-        .list_for_recipe(record.id, user_id)
+        .list_for_recipe(&record.slug, user_id)
         .context("failed to list notes")?;
 
     match fmt {
         OutputFormat::Json => {
             #[derive(Serialize)]
             struct NoteOut {
-                id: i64,
+                id: String,
                 body: String,
                 created_at: String,
             }
@@ -2531,7 +2531,7 @@ fn cmd_note(
             } else {
                 println!("Notes for '{}':\n", record.title);
                 for n in &notes {
-                    println!("  #{} ({})", n.id, n.created_at);
+                    println!("  {} ({})", n.id, n.created_at);
                     println!("    {}\n", n.body);
                 }
             }
@@ -2561,7 +2561,7 @@ fn cmd_rate(paths: &FondPaths, slug: &str, score: Option<i32>, fmt: &OutputForma
             anyhow::bail!("rating must be between 1 and 5 (got {s})");
         }
         rating_repo
-            .rate(record.id, user_id, s)
+            .rate(&record.slug, user_id, s)
             .context("failed to save rating")?;
 
         let stars = "★".repeat(s as usize) + &"☆".repeat(5 - s as usize);
@@ -2587,10 +2587,10 @@ fn cmd_rate(paths: &FondPaths, slug: &str, score: Option<i32>, fmt: &OutputForma
 
     // Show mode (no score)
     let rating = rating_repo
-        .get_for_recipe(record.id, user_id)
+        .get_for_recipe(&record.slug, user_id)
         .context("failed to get rating")?;
     let avg = rating_repo
-        .average_for_recipe(record.id)
+        .average_for_recipe(&record.slug)
         .context("failed to compute average")?;
 
     match fmt {
