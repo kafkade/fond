@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-28
+
+**Data model declared stable.** The `.cook` source-of-truth format and the
+SQLite overlay schema (migrations V001–V010) are frozen; post-1.0 migrations
+are additive and backward-compatible (see ADR-013). This satisfies the Phase 3
+definition of done and unblocks the ADR-012 sync precondition.
+
 ### Added
 
 - Native Apple bridge: new `fond-ffi` crate exposes read + cook-mode functionality (list, search, tags, recipe view, scaling, cooking timeline, reindex) to Swift via UniFFI-generated bindings over the existing Rust core
