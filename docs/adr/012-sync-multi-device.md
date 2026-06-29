@@ -1,7 +1,7 @@
 # ADR-012: Sync & Multi-Device Strategy
 
-**Status**: Proposed
-**Date**: 2026-06-26
+**Status**: Accepted
+**Date**: 2026-06-26 (accepted 2026-06-28: data model declared stable, see ADR-013)
 **Decision**: Sync recipe content via user-controlled **file-sync first**;
 **defer** authored-overlay sync, and when it is built prefer **sidecar export
 over the same file-sync channel**, evaluating **`cr-sqlite`** only if automatic

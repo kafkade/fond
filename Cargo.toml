@@ -13,20 +13,20 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "1.0.0"
 edition = "2024"
 authors = ["kafkade"]
 license = "MIT"
 repository = "https://github.com/kafkade/fond"
 
 [workspace.dependencies]
-fond-domain = { path = "crates/fond-domain", version = "0.3.0" }
-fond-core = { path = "crates/fond-core", version = "0.3.0" }
-fond-import = { path = "crates/fond-import", version = "0.3.0" }
-fond-store = { path = "crates/fond-store", version = "0.3.0" }
-fond-scrape = { path = "crates/fond-scrape", version = "0.3.0" }
-fond-timeline = { path = "crates/fond-timeline", version = "0.3.0" }
-fond-web = { path = "crates/fond-web", version = "0.3.0" }
+fond-domain = { path = "crates/fond-domain", version = "1.0.0" }
+fond-core = { path = "crates/fond-core", version = "1.0.0" }
+fond-import = { path = "crates/fond-import", version = "1.0.0" }
+fond-store = { path = "crates/fond-store", version = "1.0.0" }
+fond-scrape = { path = "crates/fond-scrape", version = "1.0.0" }
+fond-timeline = { path = "crates/fond-timeline", version = "1.0.0" }
+fond-web = { path = "crates/fond-web", version = "1.0.0" }
 thiserror = "2"
 uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }

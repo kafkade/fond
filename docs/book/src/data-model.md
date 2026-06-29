@@ -79,3 +79,12 @@ The database uses [refinery](https://github.com/rust-db/refinery) for schema mig
 - `tags` — recipe-tag associations
 - `pantry_items` — pantry overlay (not rebuilt by reindex)
 - `fts_recipes` — FTS5 virtual table for full-text search
+
+## Stability (1.0)
+
+As of **v1.0.0** the data model is **stable** (see [ADR-013](https://github.com/kafkade/fond/blob/main/docs/adr/013-data-model-stability.md)). The `.cook` source-of-truth format and the SQLite overlay schema (migrations V001–V010) are frozen. Two tiers are kept deliberately distinct:
+
+- **Derived index** (`recipes`, `recipe_ingredients`, `steps`, `cookware`, `tags`, FTS5) is disposable — rebuilt from `.cook` files by `fond reindex` and never synced.
+- **Authored overlays** (notes, ratings, cook logs, meal plans, pantry, profiles) are device-stable: anchored to the recipe **slug** with **UUIDv7** keys so they survive reindex.
+
+Post-1.0 migrations are additive and backward-compatible; breaking changes would require a 2.0 with a documented migration path.

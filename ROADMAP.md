@@ -834,7 +834,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 | 0 | First Recipe | MVP-prep | Spine works end-to-end |
 | 1 | Minimum Usable Kitchen | **MVP** | Import + search + pantry |
 | 2 | Cook's Companion | Beta | Timeline + cook mode + scaling |
-| 3 | Family Kitchen | Beta→**1.0** | Household + planning + scraping |
+| 3 | Family Kitchen | **1.0 ✅** | Household + planning + scraping — data model declared stable → 1.0 |
 | 4 | Web Interface | Post-1.0 | Browser UI |
 | 5 | Native Apple | Post-1.0 | iOS/macOS/Watch |
 | 6 | Smart Features | Research | OCR / AI |

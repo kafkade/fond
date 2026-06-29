@@ -30,7 +30,7 @@ The export envelope structure:
 ```json
 {
   "schema_version": 1,
-  "fond_version": "0.3.0",
+  "fond_version": "1.0.0",
   "exported_at": "2025-01-15T12:00:00Z",
   "recipe_count": 42,
   "recipes": [
