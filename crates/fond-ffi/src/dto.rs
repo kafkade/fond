@@ -271,6 +271,10 @@ pub enum ScalingCategoryDto {
     Salt,
     Spice,
     Thickener,
+    Egg,
+    Liquid,
+    Flour,
+    Fat,
 }
 
 impl From<ScalingCategory> for ScalingCategoryDto {
@@ -281,6 +285,10 @@ impl From<ScalingCategory> for ScalingCategoryDto {
             ScalingCategory::Salt => ScalingCategoryDto::Salt,
             ScalingCategory::Spice => ScalingCategoryDto::Spice,
             ScalingCategory::Thickener => ScalingCategoryDto::Thickener,
+            ScalingCategory::Egg => ScalingCategoryDto::Egg,
+            ScalingCategory::Liquid => ScalingCategoryDto::Liquid,
+            ScalingCategory::Flour => ScalingCategoryDto::Flour,
+            ScalingCategory::Fat => ScalingCategoryDto::Fat,
         }
     }
 }
@@ -296,6 +304,10 @@ pub struct ScaledIngredientDto {
     pub optional: bool,
     pub category: ScalingCategoryDto,
     pub warning: Option<String>,
+    /// Pure-linear value preserved when a non-linear rule adjusted the quantity.
+    pub linear_quantity: Option<String>,
+    /// Explanation of the non-linear rule applied to this line, if any.
+    pub explanation: Option<String>,
 }
 
 impl From<ScaledIngredient> for ScaledIngredientDto {
@@ -309,6 +321,8 @@ impl From<ScaledIngredient> for ScaledIngredientDto {
             optional: i.optional,
             category: i.category.into(),
             warning: i.warning,
+            linear_quantity: i.linear_quantity,
+            explanation: i.explanation,
         }
     }
 }
@@ -343,6 +357,12 @@ pub struct ScaledRecipeDto {
     pub ingredients: Vec<ScaledIngredientDto>,
     pub warnings: Vec<ScalingWarningDto>,
     pub tags: Vec<String>,
+    /// Whether the non-linear rules engine was applied.
+    pub rules_applied: bool,
+    /// Advisory cook-time suggestion (rules mode). The stated time is never rewritten.
+    pub time_suggestion: Option<String>,
+    /// Advisory pan/equipment capacity note (rules mode, large scale-ups).
+    pub pan_note: Option<String>,
 }
 
 impl From<ScaledRecipe> for ScaledRecipeDto {
@@ -359,6 +379,9 @@ impl From<ScaledRecipe> for ScaledRecipeDto {
             ingredients: r.ingredients.into_iter().map(Into::into).collect(),
             warnings: r.warnings.into_iter().map(Into::into).collect(),
             tags: r.tags,
+            rules_applied: r.rules_applied,
+            time_suggestion: r.time_suggestion,
+            pan_note: r.pan_note,
         }
     }
 }

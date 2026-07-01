@@ -293,6 +293,12 @@ enum Commands {
         /// Target number of servings
         #[arg(long, group = "scale_mode")]
         servings: Option<u32>,
+
+        /// Apply deterministic non-linear rules (sub-linear leavening,
+        /// to-taste seasoning bands, cook-time/pan suggestions). Linear is
+        /// the default; each adjusted line is explained and reversible.
+        #[arg(long)]
+        rules: bool,
     },
 
     /// Add a note to a recipe, or list existing notes.
@@ -731,9 +737,12 @@ fn main() -> Result<()> {
             serve_at,
             plan,
         } => cmd_cook(&paths, &slug, serve_at.as_deref(), plan, &fmt),
-        Commands::Scale { slug, to, servings } => {
-            cmd_scale(&paths, &slug, to.as_deref(), servings, &fmt)
-        }
+        Commands::Scale {
+            slug,
+            to,
+            servings,
+            rules,
+        } => cmd_scale(&paths, &slug, to.as_deref(), servings, rules, &fmt),
         Commands::Note { slug, text, delete } => cmd_note(&paths, &slug, &text, delete, &fmt),
         Commands::Rate { slug, score } => cmd_rate(&paths, &slug, score, &fmt),
         Commands::Scoreboard { since, limit } => {
@@ -2495,9 +2504,12 @@ fn cmd_scale(
     slug: &str,
     to: Option<&str>,
     servings: Option<u32>,
+    rules: bool,
     fmt: &OutputFormat,
 ) -> Result<()> {
-    use fond_core::scale::{ScaleError, ScaleFactor, parse_scale_arg, scale_recipe};
+    use fond_core::scale::{
+        ScaleError, ScaleFactor, ScaleOptions, parse_scale_arg, scale_recipe_with,
+    };
 
     let db = open_db(paths)?;
     let repo = RecipeRepository::new(&db);
@@ -2545,12 +2557,13 @@ fn cmd_scale(
         }
     };
 
-    let scaled = scale_recipe(&recipe, factor).map_err(|e| match e {
-        ScaleError::NoServingsMetadata => anyhow::anyhow!("{e}"),
-        ScaleError::UnparseableServings(_) => anyhow::anyhow!("{e}"),
-        ScaleError::InvalidFactor(_) => anyhow::anyhow!("{e}"),
-        ScaleError::InvalidServings(_) => anyhow::anyhow!("{e}"),
-    })?;
+    let scaled =
+        scale_recipe_with(&recipe, factor, ScaleOptions { rules }).map_err(|e| match e {
+            ScaleError::NoServingsMetadata => anyhow::anyhow!("{e}"),
+            ScaleError::UnparseableServings(_) => anyhow::anyhow!("{e}"),
+            ScaleError::InvalidFactor(_) => anyhow::anyhow!("{e}"),
+            ScaleError::InvalidServings(_) => anyhow::anyhow!("{e}"),
+        })?;
 
     match fmt {
         OutputFormat::Json => {
@@ -2570,6 +2583,10 @@ fn print_scaled_recipe(scaled: &fond_core::scale::ScaledRecipe) {
         scaled.title,
         format_scale(scaled.scale_factor)
     );
+
+    if scaled.rules_applied {
+        println!("Mode: rule-based non-linear (linear values shown for reference)");
+    }
 
     if let Some(ref orig) = scaled.original_servings {
         if let Some(ref target) = scaled.scaled_servings {
@@ -2600,8 +2617,48 @@ fn print_scaled_recipe(scaled: &fond_core::scale::ScaledRecipe) {
             (Some(q), None) => format!("{q} "),
             _ => String::new(),
         };
-        let marker = if ing.warning.is_some() { " ⚠" } else { "" };
-        println!("  - {qty}{}{marker}", ing.name);
+        // In rules mode, adjusted lines carry a preserved linear reference —
+        // only show it when it actually differs from the displayed quantity.
+        let reference = match &ing.linear_quantity {
+            Some(lin) if Some(lin) != ing.scaled_quantity.as_ref() => match &ing.unit {
+                Some(u) => format!(" (linear: {lin} {u})"),
+                None => format!(" (linear: {lin})"),
+            },
+            _ => String::new(),
+        };
+        let marker = if ing.explanation.is_some() {
+            " ★"
+        } else if ing.warning.is_some() {
+            " ⚠"
+        } else {
+            ""
+        };
+        println!("  - {qty}{}{reference}{marker}", ing.name);
+    }
+
+    // Per-line explanations for rule-adjusted ingredients.
+    let explained: Vec<&fond_core::scale::ScaledIngredient> = scaled
+        .ingredients
+        .iter()
+        .filter(|i| i.explanation.is_some())
+        .collect();
+    if !explained.is_empty() {
+        println!("\n## Adjustments\n");
+        for ing in explained {
+            if let Some(ref e) = ing.explanation {
+                println!("  ★ {}: {}", ing.name, e);
+            }
+        }
+    }
+
+    if let Some(ref ts) = scaled.time_suggestion {
+        println!("\n## Cook Time\n");
+        println!("  ⏱ {ts}");
+    }
+
+    if let Some(ref pn) = scaled.pan_note {
+        println!("\n## Pan / Equipment\n");
+        println!("  🍳 {pn}");
     }
 
     if !scaled.warnings.is_empty() {
