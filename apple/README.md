@@ -9,8 +9,35 @@ to Swift through the [`fond-ffi`](../crates/fond-ffi) crate via
 
 Scope today: **read + cook mode** (browse, search, view, scale, cooking
 timeline) with an **iPad-optimized adaptive layout** (three-column split view +
-side-by-side cook mode with live kitchen timers). Editing/write-back, the Watch
-app, and sync are follow-up work.
+side-by-side cook mode with live kitchen timers) and a **watchOS companion** for
+active cook timers, wrist alerts, and a "Next up" complication. Editing/write-back
+and sync are follow-up work.
+
+## watchOS companion (active timers & alerts)
+
+The Watch app is a thin **timer/alert/control surface** — it does *not* embed the
+Rust core. The phone stays the single owner of `FondClient` and the timeline;
+when you start cook mode there, the app lowers the backward-scheduled
+`ScheduledTimelineDto` + its live timers into a plain `Codable`
+`CookSessionPayload` (in [`Shared/`](Shared/)) and relays it to the Watch over
+**WatchConnectivity** (`updateApplicationContext`). See
+[ADR-014](../docs/adr/014-watch-companion-relay.md).
+
+On the wrist you get:
+
+- A live **active-timer list** with countdowns derived from relayed absolute
+  deadlines (so both sides stay in sync even if ticks coalesce).
+- **Local notifications + haptics** when a step timer fires — pre-scheduled per
+  running timer so the alert lands even when the app is backgrounded.
+- A **"Next up" complication / Smart Stack widget** (`FondWatchWidget`) showing
+  the imminent step or running timer with an OS-driven live countdown.
+- **Start / pause / +1 min / cancel / advance / end** controls that send messages
+  back to the phone, which mutates the authoritative session and re-broadcasts.
+
+The App Group (`group.dev.kafkade.fond`) shares the latest snapshot from the
+Watch app to its widget; on unsigned local PoC builds the group container isn't
+provisioned, so the widget reads whatever the app last wrote within its own
+sandbox — fully wired for a signed build.
 
 ## iPad / adaptive layout
 
@@ -33,12 +60,16 @@ apple/
   build-xcframework.sh   Build Swift bindings + Fond.xcframework from fond-ffi
   FondKit/               Swift package wrapping the bindings + framework
   FondApp/               Multiplatform SwiftUI app (iOS + macOS) — project.yml
+  FondWatch/             watchOS companion app (active timers & alerts)
+  FondWatchWidget/       watchOS "Next up" complication / Smart Stack widget
+  Shared/                Plain Codable relay payload shared by app + watch + widget
   SampleData/recipes/    Sample .cook files bundled into the app
 ```
 
 Generated artifacts (`FondKit/xcframework/`, `FondKit/Sources/FondKit/fond_ffi.swift`,
-`FondApp/FondApp.xcodeproj`, `SampleData/fond.db`) are git-ignored — recreate
-them with the steps below.
+`FondApp/FondApp.xcodeproj`, `SampleData/fond.db`, and the `FondWatch*/Info.plist`
++ `*.entitlements` XcodeGen generates from `project.yml`) are git-ignored —
+recreate them with the steps below.
 
 ## Prerequisites
 
@@ -63,6 +94,14 @@ open FondApp.xcodeproj          # then ⌘R, choosing the My Mac or a Simulator
 xcodebuild -project FondApp.xcodeproj -scheme Fond \
   -destination 'platform=macOS' build
 ```
+
+To run the **watchOS companion**, pick the `FondWatch` scheme with a paired
+iPhone + Apple Watch simulator (the watch app is embedded in the iOS `Fond`
+app for the iOS destination). Start cook mode on the phone and the same timers,
+"Next up" step, and wrist controls appear on the Watch; a firing timer produces
+a haptic alert. The `FondWatch`/`FondWatchWidget` targets don't link the
+xcframework, but the shared project still resolves the `FondKit` package, so run
+`build-xcframework.sh` first regardless.
 
 On first launch the app copies the bundled `SampleData/recipes/*.cook` into its
 Application Support directory and calls `FondClient.reindex()` to (re)build the

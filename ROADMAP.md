@@ -810,7 +810,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 - **Deliverables:** UniFFI binding; SwiftUI recipe + cook-mode app; Watch timers.
 - **Risks:** UniFFI bridge complexity (🔴); App Store + sync expectations.
 - **Cut line:** Read/cook first; editing later.
-- **Progress:** Foundation landed — `fond-ffi` UniFFI crate (read + cook mode) plus a multiplatform SwiftUI proof-of-concept (iOS + macOS) under [`apple/`](apple/); see [ADR-011](docs/adr/011-native-apple-bridge.md). iPad layouts, the Watch app, and editing remain.
+- **Progress:** Foundation landed — `fond-ffi` UniFFI crate (read + cook mode) plus a multiplatform SwiftUI proof-of-concept (iOS + macOS) under [`apple/`](apple/); see [ADR-011](docs/adr/011-native-apple-bridge.md). A watchOS companion now surfaces active cook timers, wrist haptics/notifications when a step timer fires, a "Next up" complication/Smart Stack widget, and start/pause/advance controls — phone-relayed over WatchConnectivity, see [ADR-014](docs/adr/014-watch-companion-relay.md). iPad layouts landed; editing remains.
 
 ### Phase 6 — Smart Features *(Research)*
 

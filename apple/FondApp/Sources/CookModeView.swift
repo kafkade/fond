@@ -10,7 +10,8 @@ struct CookModeView: View {
     let slug: String
     let title: String
     @EnvironmentObject private var model: AppModel
-    @StateObject private var timers = KitchenTimerModel()
+    @EnvironmentObject private var session: CookSessionModel
+    private var timers: KitchenTimerModel { session.timers }
 
     @State private var serveAt = Date().addingTimeInterval(2 * 3600)
     @State private var schedule: ScheduledTimelineDto?
@@ -132,7 +133,7 @@ struct CookModeView: View {
                 }
                 if let duration = node.duration, duration.seconds > 0 {
                     Button {
-                        timers.start(label: node.label, seconds: Int(duration.seconds))
+                        session.startTimer(stepId: node.id, label: node.label, seconds: Int(duration.seconds))
                     } label: {
                         Label("Start timer", systemImage: "timer")
                             .font(.caption)
@@ -223,8 +224,12 @@ struct CookModeView: View {
     private func reschedule() {
         guard let client = model.client else { return }
         do {
-            schedule = try client.scheduleTimeline(slug: slug, serveAt: Self.serveFormatter.string(from: serveAt))
+            let scheduled = try client.scheduleTimeline(slug: slug, serveAt: Self.serveFormatter.string(from: serveAt))
+            schedule = scheduled
             error = nil
+            // Promote to the app-wide authoritative session so it relays to the
+            // Watch and drives the "Next up" complication.
+            session.activate(schedule: scheduled)
         } catch {
             self.error = String(describing: error)
         }
