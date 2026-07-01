@@ -166,10 +166,12 @@ fn scales_by_multiplier() {
         .scale_recipe(
             "chicken-adobo".to_string(),
             ScaleFactorDto::Multiplier { value: 2.0 },
+            false,
         )
         .unwrap();
     assert_eq!(scaled.scale_factor, 2.0);
     assert!(!scaled.ingredients.is_empty());
+    assert!(!scaled.rules_applied);
 }
 
 #[test]
@@ -180,9 +182,24 @@ fn scales_to_servings() {
         .scale_recipe(
             "chicken-adobo".to_string(),
             ScaleFactorDto::ToServings { servings: 8 },
+            false,
         )
         .unwrap();
     assert_eq!(scaled.scale_factor, 2.0);
+}
+
+#[test]
+fn scales_with_rules() {
+    let dir = fixture();
+    let c = client(&dir);
+    let scaled = c
+        .scale_recipe(
+            "chicken-adobo".to_string(),
+            ScaleFactorDto::Multiplier { value: 2.0 },
+            true,
+        )
+        .unwrap();
+    assert!(scaled.rules_applied);
 }
 
 #[test]

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDateTime;
-use fond_core::scale::{ScaleFactor, scale_recipe};
+use fond_core::scale::{ScaleFactor, ScaleOptions, scale_recipe_with};
 use fond_domain::{Recipe, escape_fts5_query, parse_cook};
 use fond_store::{FondDb, RecipeRepository, reindex};
 use fond_timeline::{build_timeline, schedule_backward};
@@ -114,17 +114,24 @@ impl FondClient {
     }
 
     /// Scale a recipe's ingredient quantities. Times are never modified.
+    ///
+    /// When `rules` is `true`, applies the deterministic non-linear adjustment
+    /// engine (sub-linear leavening, to-taste seasoning bands, pan-coating fat
+    /// notes, advisory cook-time/pan suggestions). When `false` (the default),
+    /// scaling is purely linear with non-linear warnings only.
+    #[uniffi::method(default(rules = false))]
     pub fn scale_recipe(
         &self,
         slug: String,
         factor: ScaleFactorDto,
+        rules: bool,
     ) -> Result<ScaledRecipeDto, FondError> {
         let recipe = self.load_recipe(&slug)?;
         let factor = match factor {
             ScaleFactorDto::Multiplier { value } => ScaleFactor::Multiplier(value),
             ScaleFactorDto::ToServings { servings } => ScaleFactor::ToServings(servings),
         };
-        let scaled = scale_recipe(&recipe, factor)?;
+        let scaled = scale_recipe_with(&recipe, factor, ScaleOptions { rules })?;
         Ok(scaled.into())
     }
 
