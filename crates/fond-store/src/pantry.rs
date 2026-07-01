@@ -37,6 +37,25 @@ pub struct PantryCoverage {
     pub ingredients: Vec<IngredientCoverage>,
 }
 
+/// A single ranked "what can I cook?" suggestion.
+///
+/// Produced by [`PantryRepository::suggest`] by scoring recipes against the
+/// present pantry. Deterministic: no ML, purely presence-based coverage.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecipeSuggestion {
+    pub slug: String,
+    pub title: String,
+    pub total_time: String,
+    pub total_time_minutes: Option<u32>,
+    pub total_ingredients: usize,
+    pub matched_count: usize,
+    /// Count of required (non-optional) ingredients not covered by the pantry.
+    pub missing_required: usize,
+    pub coverage_pct: f64,
+    /// Names of required (non-optional) ingredients not covered by the pantry.
+    pub missing: Vec<String>,
+}
+
 /// Repository for pantry persistence operations.
 pub struct PantryRepository<'a> {
     db: &'a FondDb,
@@ -206,6 +225,100 @@ impl<'a> PantryRepository<'a> {
             ingredients,
         }))
     }
+
+    /// Rank recipes by pantry coverage for the "what can I cook?" suggestion.
+    ///
+    /// Scores each candidate recipe against the currently-present pantry using
+    /// the same presence-first matching as [`Self::check_coverage`]. This is
+    /// fully deterministic (no ML): coverage % is `matched / total` ingredients.
+    ///
+    /// Recipes whose count of *required* (non-optional) missing ingredients
+    /// exceeds `max_missing` are dropped (when `max_missing` is `Some`).
+    ///
+    /// Results are sorted by coverage descending, then total time ascending
+    /// (recipes without a known time sort last), then title ascending for a
+    /// stable, reproducible order.
+    pub fn suggest(
+        &self,
+        candidates: &[crate::repo::RecipeSummary],
+        max_missing: Option<usize>,
+    ) -> Result<Vec<RecipeSuggestion>, StoreError> {
+        let conn = self.db.conn();
+
+        // Load present pantry once and reuse it across every candidate.
+        let mut pantry_stmt = conn.prepare("SELECT name FROM pantry_items WHERE present = 1")?;
+        let pantry_names: Vec<String> = pantry_stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut ing_stmt = conn.prepare(
+            "SELECT name, optional FROM recipe_ingredients
+             WHERE recipe_id = ?1 ORDER BY sort_order",
+        )?;
+
+        let mut suggestions = Vec::new();
+
+        for recipe in candidates {
+            let recipe_ingredients: Vec<(String, bool)> = ing_stmt
+                .query_map(params![recipe.id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut matched_count = 0;
+            let mut missing = Vec::new();
+
+            for (ing_name, optional) in &recipe_ingredients {
+                let (matched, _matched_item) = find_pantry_match(ing_name, &pantry_names);
+                if matched {
+                    matched_count += 1;
+                } else if !*optional {
+                    missing.push(ing_name.clone());
+                }
+            }
+
+            let missing_required = missing.len();
+            if let Some(cap) = max_missing
+                && missing_required > cap
+            {
+                continue;
+            }
+
+            let total = recipe_ingredients.len();
+            let coverage_pct = if total > 0 {
+                (matched_count as f64 / total as f64) * 100.0
+            } else {
+                100.0
+            };
+
+            suggestions.push(RecipeSuggestion {
+                slug: recipe.slug.clone(),
+                title: recipe.title.clone(),
+                total_time: recipe.total_time.clone(),
+                total_time_minutes: recipe.total_time_minutes,
+                total_ingredients: total,
+                matched_count,
+                missing_required,
+                coverage_pct,
+                missing,
+            });
+        }
+
+        suggestions.sort_by(|a, b| {
+            b.coverage_pct
+                .partial_cmp(&a.coverage_pct)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| time_rank(a.total_time_minutes).cmp(&time_rank(b.total_time_minutes)))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+        });
+
+        Ok(suggestions)
+    }
+}
+
+/// Sort key for total time: known times ascending, unknown (`None`) last.
+fn time_rank(minutes: Option<u32>) -> u32 {
+    minutes.unwrap_or(u32::MAX)
 }
 
 /// Prep modifiers to strip from ingredient names before matching.
