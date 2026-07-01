@@ -151,6 +151,24 @@ fond pantry check chicken-adobo
 # Output: Coverage: 75% (3/4 ingredients)
 ```
 
+### `fond suggest`
+
+"What can I cook now?" — rank recipes by how much of each one your pantry
+already covers. Deterministic (no ML) and fully offline: recipes are sorted by
+coverage % then by total time, and each suggestion lists the required
+ingredients you're still missing.
+
+By default it shows recipes missing at most 2 required ingredients. Use
+`--max-missing N` to widen or narrow that, and `--limit N` to cap the list.
+
+```bash
+fond suggest                          # near-makeable recipes, ranked
+fond suggest --max-missing 0          # only recipes you can make right now
+fond suggest --cuisine italian        # filter by cuisine (a tag)
+fond suggest --max-time 30 --limit 5  # quick options, top 5
+fond suggest --format json            # machine-readable output
+```
+
 ### `fond grocery from-recipe <slug>`
 
 Generate a grocery list from a recipe, subtracting pantry items.

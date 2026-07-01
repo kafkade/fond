@@ -18,3 +18,21 @@ listed in `Cargo.lock`).
   informational nutrition estimates in recipe display.
 - **File**: `data/usda/usda_nutrition_subset.csv`
 - **Details**: See `docs/due-diligence/usda-fooddata-central.md`
+
+## Ingredient Substitution Reference
+
+- **Source**: Hand-curated by the fond project from widely published,
+  non-proprietary culinary conversions (e.g., King Arthur Baking, America's
+  Test Kitchen, Serious Eats) and common cooking practice. Ratios are facts,
+  not copyrightable expression; all descriptive text is authored originally
+  for fond.
+- **License**: Original work, MIT (see `LICENSE`). Per-entry `source` fields
+  cite the general authority for the conversion, not a copied text.
+- **Usage**: Advisory, ranked, context-tagged (baking / sauteing / general)
+  ingredient substitution suggestions surfaced by `fond substitute`. Never
+  auto-applied to a `.cook` file.
+- **File**: `data/substitutions/substitutions.json`
+- **Details**: See `docs/due-diligence/substitution-dataset.md`
+- **Status**: Seed dataset — ratios need external validation before being
+  treated as authoritative (tracked via the `validation` label on
+  [#78](https://github.com/kafkade/fond/issues/78)).

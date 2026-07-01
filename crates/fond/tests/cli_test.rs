@@ -1329,6 +1329,161 @@ fn pantry_check_nonexistent_recipe() {
         .stderr(predicate::str::contains("recipe not found"));
 }
 
+// ──────────────────────────────────────────────────────────────
+// suggest ("what can I cook?")
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn suggest_empty_pantry_shows_guidance() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["suggest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pantry is empty"))
+        .stdout(predicate::str::contains("fond pantry add"));
+}
+
+#[test]
+fn suggest_ranks_by_coverage() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Fully stock chicken adobo (4/4) but only one pasta ingredient.
+    fond(&tmp)
+        .args([
+            "pantry",
+            "add",
+            "soy sauce",
+            "vinegar",
+            "chicken thighs",
+            "garlic",
+            "pasta",
+        ])
+        .assert()
+        .success();
+
+    // Raise the cap so the lower-coverage pasta still shows.
+    let output = fond(&tmp)
+        .args(["suggest", "--max-missing", "10"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let chicken_pos = stdout.find("chicken-adobo").expect("chicken not listed");
+    let pasta_pos = stdout.find("pasta-carbonara").expect("pasta not listed");
+    assert!(
+        chicken_pos < pasta_pos,
+        "higher-coverage recipe should rank first:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("make now"),
+        "fully-covered recipe should be flagged:\n{stdout}"
+    );
+}
+
+#[test]
+fn suggest_max_missing_filters_results() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    // Cover 3/4 of chicken (1 missing) and 0/5 of pasta (5 missing).
+    fond(&tmp)
+        .args(["pantry", "add", "soy sauce", "vinegar", "garlic"])
+        .assert()
+        .success();
+
+    // Default cap (2) keeps chicken (1 missing) and drops pasta (5 missing).
+    fond(&tmp)
+        .args(["suggest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("chicken-adobo"))
+        .stdout(predicate::str::contains("pasta-carbonara").not());
+
+    // A strict cap of 0 leaves nothing (chicken still has 1 missing).
+    fond(&tmp)
+        .args(["suggest", "--max-missing", "0"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No recipes are within 0 missing"));
+}
+
+#[test]
+fn suggest_limit_caps_results() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    write_fixture(&tmp, "pasta-carbonara.cook", PASTA_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args([
+            "pantry",
+            "add",
+            "soy sauce",
+            "vinegar",
+            "chicken thighs",
+            "garlic",
+            "pasta",
+        ])
+        .assert()
+        .success();
+
+    fond(&tmp)
+        .args(["suggest", "--max-missing", "10", "--limit", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 suggestion(s)"))
+        .stdout(predicate::str::contains("pasta-carbonara").not());
+}
+
+#[test]
+fn suggest_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["pantry", "add", "soy sauce", "vinegar", "garlic"])
+        .assert()
+        .success();
+
+    fond(&tmp)
+        .args(["--json", "suggest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"coverage_pct\""))
+        .stdout(predicate::str::contains("\"missing\""))
+        .stdout(predicate::str::contains("\"slug\": \"chicken-adobo\""));
+}
+
+#[test]
+fn suggest_json_empty_pantry_is_empty_array() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "chicken-adobo.cook", CHICKEN_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["--json", "suggest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[]"));
+}
+
 #[test]
 fn pantry_rm_json_output() {
     let tmp = TempDir::new().unwrap();
@@ -2477,4 +2632,138 @@ fn scoreboard_help() {
         .success()
         .stdout(predicate::str::contains("--since"))
         .stdout(predicate::str::contains("--limit"));
+}
+
+// ──────────────────────────────────────────────────────────────
+// substitute
+// ──────────────────────────────────────────────────────────────
+
+const PANCAKES_COOK: &str = "\
+---
+title: Buttermilk Pancakes
+tags:
+  - breakfast
+  - baking
+---
+
+Mix @all-purpose flour{2%cups}, @baking powder{2%tsp}, @sugar{2%tbsp}, and @buttermilk{2%cups}.
+
+Cook on a griddle.
+";
+
+#[test]
+fn substitute_buttermilk_ranked_sourced_with_caveat() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "buttermilk"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Substitutions for: buttermilk"))
+        .stdout(predicate::str::contains("milk + lemon juice"))
+        .stdout(predicate::str::contains("King Arthur Baking Company"))
+        .stdout(predicate::str::contains("baking soda"))
+        .stdout(predicate::str::contains("Advisory only"));
+}
+
+#[test]
+fn substitute_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["--json", "substitute", "buttermilk"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"canonical\": \"buttermilk\""))
+        .stdout(predicate::str::contains(
+            "\"substitute\": \"milk + lemon juice\"",
+        ))
+        .stdout(predicate::str::contains("\"rank\": 1"))
+        .stdout(predicate::str::contains("\"disclaimer\""));
+}
+
+#[test]
+fn substitute_context_prioritizes_sauteing() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "butter", "--context", "sauteing"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context: sauteing"))
+        .stdout(predicate::str::contains("olive oil or neutral oil"));
+}
+
+#[test]
+fn substitute_unknown_ingredient_lists_available() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "unobtanium"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No curated substitutions"))
+        .stdout(predicate::str::contains("Available ingredients:"))
+        .stdout(predicate::str::contains("buttermilk"));
+}
+
+#[test]
+fn substitute_recipe_infers_baking_context() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "buttermilk-pancakes.cook", PANCAKES_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args([
+            "substitute",
+            "buttermilk",
+            "--recipe",
+            "buttermilk-pancakes",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("inferred from recipe"))
+        .stdout(predicate::str::contains("Baking notes:"));
+}
+
+#[test]
+fn substitute_explicit_context_overrides_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "buttermilk-pancakes.cook", PANCAKES_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args([
+            "substitute",
+            "buttermilk",
+            "--recipe",
+            "buttermilk-pancakes",
+            "--context",
+            "general",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context: general"))
+        .stdout(predicate::str::contains("inferred").not());
+}
+
+#[test]
+fn substitute_recipe_not_found_errors() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["substitute", "buttermilk", "--recipe", "does-not-exist"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no recipe found"));
+}
+
+#[test]
+fn substitute_help() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--context"))
+        .stdout(predicate::str::contains("--recipe"));
 }

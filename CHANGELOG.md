@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Ingredient substitution engine: `fond substitute <ingredient>` suggests curated, ranked, sourced alternatives ("out of buttermilk? use milk + lemon juice") from a bundled reference dataset (ROADMAP §6.2) — not a generative model. Each option lists a ratio, cooking context, caveat, and source. Context-aware via `--context baking|sauteing|general`, or `--recipe <slug>` to infer the context from a recipe (e.g., surfacing baking-structure caveats). Advisory only — never auto-applied to a `.cook` file — and supports `--format table|json`. The seed dataset (`data/substitutions/substitutions.json`, ~17 ingredients) is MIT-licensed original work; ratios are pending external validation (see `docs/due-diligence/substitution-dataset.md`)
+- watchOS companion app: a native Apple Watch surface for active cook timers and alerts. Starting cook mode on the phone relays the backward-scheduled timeline over WatchConnectivity, so the same live timers appear on the wrist with countdowns, a "Next up" step, and start/pause/+1 min/cancel/advance/end controls that drive the authoritative phone session
+- Wrist alerts: a local notification is pre-scheduled per running timer (fires when the app is backgrounded) plus an in-app haptic the instant a countdown reaches zero — a firing timer produces a haptic alert on the Watch
+- "Next up" complication / Smart Stack widget (`FondWatchWidget`): a WidgetKit accessory (inline/circular/corner/rectangular) showing the imminent step or running timer with an OS-driven live countdown, fed from a shared App Group snapshot
+- `apple/Shared/` relay payload: a dependency-free `Codable` `CookSessionPayload` shared by the iOS app, Watch app, and widget; the phone lowers the FFI `ScheduledTimelineDto` + live timers into it (the Watch never links the Rust core). See [ADR-014](docs/adr/014-watch-companion-relay.md)
+- iPad-optimized native layout: the SwiftUI app now uses an adaptive three-column `NavigationSplitView` (sidebar collections/tags → recipe list → detail) that expands on iPad landscape/macOS and gracefully collapses to a stack under Slide Over, Stage Manager, and on iPhone
+- Side-by-side cook mode on a wide canvas: steps render beside a live panel with the plan summary and real kitchen timers (start/pause/resume/+1 min/cancel) that count down with a haptic + visual "done" alert; falls back to a single column in compact width
+- Keyboard + pointer support in the native app: selection-driven lists (Magic Keyboard arrow keys, trackpad hover) and a ⌘R shortcut to start cook mode
+- Inventory-based recipe suggestions: `fond suggest` ranks recipes by pantry coverage % (presence-first, per ADR-009), sorted by coverage then total time. Deterministic and fully offline — no ML. Supports `--tag`, `--cuisine`, `--max-time`, `--source`, `--max-missing` (default 2), `--limit`, and `--format table|json`, and surfaces the missing required ingredients per suggestion
+
 ## [1.0.0] - 2026-06-28
 
 **Data model declared stable.** The `.cook` source-of-truth format and the

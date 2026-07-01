@@ -5,14 +5,18 @@ import SwiftUI
 @main
 struct FondApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var session = CookSessionModel()
+    @StateObject private var relay = PhoneSessionRelay()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(session)
+                .onAppear { relay.bind(to: session) }
         }
         #if os(macOS)
-        .defaultSize(width: 900, height: 640)
+        .defaultSize(width: 1100, height: 720)
         #endif
     }
 }

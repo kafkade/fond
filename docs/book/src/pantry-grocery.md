@@ -55,6 +55,27 @@ Coverage: 60% (3/5 ingredients)
 
 Pantry matching is bidirectional — a pantry item "garlic" matches recipe ingredient "garlic cloves", and a pantry item "garlic cloves" also matches "garlic". This gives you the most generous coverage estimate.
 
+### What Can I Cook Now?
+
+Once your pantry has a few items, `fond suggest` ranks every recipe by how much of it your pantry already covers — a deterministic, offline "what can I cook tonight?" read (no ML). Recipes are sorted by coverage % then by total time, and each row lists the required ingredients you're still missing.
+
+```bash
+fond suggest                    # recipes missing ≤2 required ingredients, ranked
+fond suggest --max-missing 0    # only recipes you can make right now
+fond suggest --max-time 30      # quick options only
+```
+
+```text
++------------+---------------+---------------+--------+--------------+
+| Coverage   | Slug          | Title         | Time   | Missing      |
++============+===============+===============+========+==============+
+| 100% (4/4) | chicken-adobo | Chicken Adobo | 1 hr   | ✓ make now   |
+| 60% (3/5)  | pasta-norma   | Pasta alla…   | 30 min | eggplant,…   |
++------------+---------------+---------------+--------+--------------+
+```
+
+Use `--max-missing N` to widen or narrow the list, `--limit N` to cap it, and `--format json` for scripting. Tag/cuisine/time/source filters work just like `fond list`.
+
 ## Grocery Lists
 
 Generate a shopping list from a recipe, automatically subtracting what you already have in your pantry.
