@@ -9,6 +9,10 @@ struct KitchenTimer: Identifiable {
     enum State { case running, paused, finished }
 
     let id = UUID()
+    /// Timeline step this timer was started from, when known. Lets the cook
+    /// session associate a running countdown with its scheduled step (for relay
+    /// + "start once per step" idempotency).
+    var stepId: UInt64?
     let label: String
     let total: Int
     var state: State
@@ -40,20 +44,28 @@ final class KitchenTimerModel: ObservableObject {
     @Published private(set) var timers: [KitchenTimer] = []
     private var cancellable: AnyCancellable?
 
+    /// Fired on discrete state changes (start/pause/resume/+1/cancel/finish) —
+    /// *not* on every 1-second tick — so an owner (the cook session) can relay
+    /// the new state to the Watch without spamming a per-second broadcast.
+    var onChange: (() -> Void)?
+
     var hasTimers: Bool { !timers.isEmpty }
 
-    func start(label: String, seconds: Int) {
-        guard seconds > 0 else { return }
-        timers.append(
-            KitchenTimer(
-                label: label,
-                total: seconds,
-                state: .running,
-                deadline: Date().addingTimeInterval(Double(seconds)),
-                remaining: seconds
-            )
+    @discardableResult
+    func start(label: String, seconds: Int, stepId: UInt64? = nil) -> UUID? {
+        guard seconds > 0 else { return nil }
+        let timer = KitchenTimer(
+            stepId: stepId,
+            label: label,
+            total: seconds,
+            state: .running,
+            deadline: Date().addingTimeInterval(Double(seconds)),
+            remaining: seconds
         )
+        timers.append(timer)
         ensureTicking()
+        onChange?()
+        return timer.id
     }
 
     func pause(_ id: UUID) {
@@ -61,6 +73,7 @@ final class KitchenTimerModel: ObservableObject {
         timers[i].remaining = timers[i].displaySeconds
         timers[i].state = .paused
         stopIfIdle()
+        onChange?()
     }
 
     func resume(_ id: UUID) {
@@ -68,6 +81,7 @@ final class KitchenTimerModel: ObservableObject {
         timers[i].deadline = Date().addingTimeInterval(Double(timers[i].remaining))
         timers[i].state = .running
         ensureTicking()
+        onChange?()
     }
 
     func addMinute(_ id: UUID) {
@@ -83,16 +97,24 @@ final class KitchenTimerModel: ObservableObject {
             timers[i].state = .running
             ensureTicking()
         }
+        onChange?()
     }
 
     func cancel(_ id: UUID) {
         timers.removeAll { $0.id == id }
         stopIfIdle()
+        onChange?()
     }
 
     func cancelAll() {
         timers.removeAll()
         stopIfIdle()
+        onChange?()
+    }
+
+    /// Whether a (non-finished) timer already exists for a given step.
+    func hasActiveTimer(forStep stepId: UInt64) -> Bool {
+        timers.contains { $0.stepId == stepId && $0.state != .finished }
     }
 
     // MARK: - Ticking
@@ -129,6 +151,8 @@ final class KitchenTimerModel: ObservableObject {
         // Running countdowns are derived from `deadline`, so nudge observers to
         // re-read even on ticks where the stored array is otherwise unchanged.
         objectWillChange.send()
+        // Only relay on the tick that actually flips a timer to `.finished`.
+        if justFinished { onChange?() }
     }
 
     static func clock(_ seconds: Int) -> String {

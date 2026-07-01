@@ -5,6 +5,7 @@ options:
   deploymentTarget:
     iOS: "17.0"
     macOS: "14.0"
+    watchOS: "10.0"
 
 packages:
   FondKit:
@@ -17,6 +18,8 @@ targets:
     supportedDestinations: [iOS, macOS]
     sources:
       - path: Sources
+      # Plain Codable relay payload shared with the Watch app + widget.
+      - path: ../Shared
       # Bundle the sample .cook files as a folder reference; the app seeds and
       # reindexes them on first launch.
       - path: ../SampleData/recipes
@@ -25,11 +28,16 @@ targets:
     dependencies:
       - package: FondKit
         product: FondKit
+      # Embed the watchOS companion app — but only in the iOS build; macOS has
+      # no Watch to carry.
+      - target: FondWatch
+        embed: true
+        destinationFilters: [iOS]
     settings:
       base:
         PRODUCT_NAME: Fond
         PRODUCT_BUNDLE_IDENTIFIER: dev.kafkade.fond
-        MARKETING_VERSION: "0.4.0"
+        MARKETING_VERSION: "0.5.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: YES
@@ -37,6 +45,71 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.food-and-drink"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         # Local PoC: no signing team required to build/run.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+
+  # watchOS companion app: a thin timer/alert/control surface. It does NOT link
+  # FondKit / the Rust core — it renders the relayed CookSessionPayload it
+  # receives from the phone over WatchConnectivity (ADR-011 / issue #75).
+  FondWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: ../FondWatch/Sources
+      - path: ../Shared
+    dependencies:
+      - target: FondWatchWidget
+        embed: true
+    info:
+      path: ../FondWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Fond
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: dev.kafkade.fond
+    entitlements:
+      path: ../FondWatch/FondWatch.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.dev.kafkade.fond
+    settings:
+      base:
+        PRODUCT_NAME: Fond
+        PRODUCT_BUNDLE_IDENTIFIER: dev.kafkade.fond.watchkitapp
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+
+  # watchOS "Next up" complication / Smart Stack widget.
+  FondWatchWidget:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: ../FondWatchWidget/Sources
+      - path: ../Shared
+    info:
+      path: ../FondWatchWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Fond Next Up
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: ../FondWatchWidget/FondWatchWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.dev.kafkade.fond
+    settings:
+      base:
+        PRODUCT_NAME: FondNextUp
+        PRODUCT_BUNDLE_IDENTIFIER: dev.kafkade.fond.watchkitapp.widget
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
