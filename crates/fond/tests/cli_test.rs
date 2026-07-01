@@ -2633,3 +2633,137 @@ fn scoreboard_help() {
         .stdout(predicate::str::contains("--since"))
         .stdout(predicate::str::contains("--limit"));
 }
+
+// ──────────────────────────────────────────────────────────────
+// substitute
+// ──────────────────────────────────────────────────────────────
+
+const PANCAKES_COOK: &str = "\
+---
+title: Buttermilk Pancakes
+tags:
+  - breakfast
+  - baking
+---
+
+Mix @all-purpose flour{2%cups}, @baking powder{2%tsp}, @sugar{2%tbsp}, and @buttermilk{2%cups}.
+
+Cook on a griddle.
+";
+
+#[test]
+fn substitute_buttermilk_ranked_sourced_with_caveat() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "buttermilk"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Substitutions for: buttermilk"))
+        .stdout(predicate::str::contains("milk + lemon juice"))
+        .stdout(predicate::str::contains("King Arthur Baking Company"))
+        .stdout(predicate::str::contains("baking soda"))
+        .stdout(predicate::str::contains("Advisory only"));
+}
+
+#[test]
+fn substitute_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["--json", "substitute", "buttermilk"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"canonical\": \"buttermilk\""))
+        .stdout(predicate::str::contains(
+            "\"substitute\": \"milk + lemon juice\"",
+        ))
+        .stdout(predicate::str::contains("\"rank\": 1"))
+        .stdout(predicate::str::contains("\"disclaimer\""));
+}
+
+#[test]
+fn substitute_context_prioritizes_sauteing() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "butter", "--context", "sauteing"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context: sauteing"))
+        .stdout(predicate::str::contains("olive oil or neutral oil"));
+}
+
+#[test]
+fn substitute_unknown_ingredient_lists_available() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "unobtanium"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No curated substitutions"))
+        .stdout(predicate::str::contains("Available ingredients:"))
+        .stdout(predicate::str::contains("buttermilk"));
+}
+
+#[test]
+fn substitute_recipe_infers_baking_context() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "buttermilk-pancakes.cook", PANCAKES_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args([
+            "substitute",
+            "buttermilk",
+            "--recipe",
+            "buttermilk-pancakes",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("inferred from recipe"))
+        .stdout(predicate::str::contains("Baking notes:"));
+}
+
+#[test]
+fn substitute_explicit_context_overrides_recipe() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "buttermilk-pancakes.cook", PANCAKES_COOK);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args([
+            "substitute",
+            "buttermilk",
+            "--recipe",
+            "buttermilk-pancakes",
+            "--context",
+            "general",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context: general"))
+        .stdout(predicate::str::contains("inferred").not());
+}
+
+#[test]
+fn substitute_recipe_not_found_errors() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .args(["substitute", "buttermilk", "--recipe", "does-not-exist"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no recipe found"));
+}
+
+#[test]
+fn substitute_help() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp)
+        .args(["substitute", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--context"))
+        .stdout(predicate::str::contains("--recipe"));
+}

@@ -1,0 +1,436 @@
+{
+  "schema_version": 1,
+  "description": "Curated, advisory ingredient substitution reference for fond. Context-tagged (baking / sauteing / general), ranked, and sourced. Ratios are culinary facts; substitutions are advisory only and never auto-applied to a recipe. See THIRD_PARTY.md and docs/due-diligence/substitution-dataset.md.",
+  "entries": [
+    {
+      "canonical": "buttermilk",
+      "aliases": ["cultured buttermilk", "butter milk"],
+      "substitutions": [
+        {
+          "substitute": "milk + lemon juice",
+          "ratio": "1 cup buttermilk = 1 cup milk + 1 tbsp lemon juice; stir and rest 5-10 min",
+          "contexts": ["baking", "general"],
+          "caveat": "In baking, the acidity reacts with baking soda for lift — use an acid-based swap, not plain milk, or the crumb won't rise the same.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        },
+        {
+          "substitute": "milk + white vinegar",
+          "ratio": "1 cup buttermilk = 1 cup milk + 1 tbsp white vinegar; stir and rest 5-10 min",
+          "contexts": ["baking", "general"],
+          "caveat": "Slightly sharper than lemon; the same acid-plus-soda leavening applies in baking.",
+          "rank": 2,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "plain yogurt, thinned",
+          "ratio": "1 cup buttermilk = 3/4 cup plain yogurt + 1/4 cup milk or water",
+          "contexts": ["baking", "general"],
+          "caveat": "Thicker and tangier; thin to a pourable consistency and expect a denser crumb.",
+          "rank": 3,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "sour cream, thinned",
+          "ratio": "1 cup buttermilk = 3/4 cup sour cream + 1/4 cup milk or water",
+          "contexts": ["general"],
+          "caveat": "Adds richness and tang; best where extra fat is welcome.",
+          "rank": 4,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "butter",
+      "aliases": ["unsalted butter", "salted butter", "sweet cream butter"],
+      "substitutions": [
+        {
+          "substitute": "olive oil or neutral oil",
+          "ratio": "1 tbsp butter ≈ 1 tbsp oil (or scale ~3/4 by volume for a leaner result)",
+          "contexts": ["sauteing", "general"],
+          "caveat": "No browning or milk-solid flavor, but a higher smoke point — good for sauteing, not for flavor-forward finishing.",
+          "rank": 1,
+          "source": "Serious Eats"
+        },
+        {
+          "substitute": "margarine (stick, baking type)",
+          "ratio": "1:1 by weight or volume",
+          "contexts": ["baking", "general"],
+          "caveat": "Use stick (not soft/spreadable, which is higher in water) or texture and spread suffer; flavor is flatter.",
+          "rank": 2,
+          "source": "King Arthur Baking Company"
+        },
+        {
+          "substitute": "coconut oil (refined, solid)",
+          "ratio": "1:1 by volume",
+          "contexts": ["baking"],
+          "caveat": "Solid at room temperature so it creams passably, but melts differently; refined avoids coconut flavor. Structure and spread will shift.",
+          "rank": 3,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "egg",
+      "aliases": ["eggs", "large egg", "whole egg"],
+      "substitutions": [
+        {
+          "substitute": "ground flaxseed + water (flax egg)",
+          "ratio": "1 egg = 1 tbsp ground flaxseed + 3 tbsp water; rest 5-10 min until gel",
+          "contexts": ["baking"],
+          "caveat": "Works as a binder, not for structure or lift — good in quick breads/cookies, poor in cakes that rely on eggs for rise.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        },
+        {
+          "substitute": "unsweetened applesauce",
+          "ratio": "1 egg = 1/4 cup applesauce",
+          "contexts": ["baking"],
+          "caveat": "Adds moisture and a little sweetness while reducing rise; best in muffins and quick breads, not delicate cakes.",
+          "rank": 2,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "mashed ripe banana",
+          "ratio": "1 egg = 1/4 cup mashed banana (about 1/2 banana)",
+          "contexts": ["baking"],
+          "caveat": "Binds and adds moisture but carries banana flavor; suits sweet quick breads.",
+          "rank": 3,
+          "source": "Culinary reference (common practice)"
+        },
+        {
+          "substitute": "commercial egg replacer",
+          "ratio": "Follow package directions per egg",
+          "contexts": ["baking"],
+          "caveat": "Formulated for binding and some lift; results vary by brand.",
+          "rank": 4,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "baking powder",
+      "aliases": ["double-acting baking powder"],
+      "substitutions": [
+        {
+          "substitute": "baking soda + cream of tartar",
+          "ratio": "1 tsp baking powder = 1/4 tsp baking soda + 1/2 tsp cream of tartar",
+          "contexts": ["baking"],
+          "caveat": "Single-acting — mix into the batter and bake right away; it won't hold a second rise.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        }
+      ]
+    },
+    {
+      "canonical": "baking soda",
+      "aliases": ["bicarbonate of soda", "sodium bicarbonate"],
+      "substitutions": [
+        {
+          "substitute": "baking powder",
+          "ratio": "Use about 3 tsp baking powder per 1 tsp baking soda",
+          "contexts": ["baking"],
+          "caveat": "Baking powder is weaker and already contains acid, so it can throw off the recipe's salt and acid balance — results are approximate.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        }
+      ]
+    },
+    {
+      "canonical": "sour cream",
+      "aliases": ["cultured sour cream"],
+      "substitutions": [
+        {
+          "substitute": "plain Greek yogurt",
+          "ratio": "1:1",
+          "contexts": ["baking", "general"],
+          "caveat": "Very close in acidity and moisture for baking; when cooking, stir in off-heat to avoid curdling.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "crème fraîche",
+          "ratio": "1:1",
+          "contexts": ["general"],
+          "caveat": "Richer and less tangy, and more stable to heat.",
+          "rank": 2,
+          "source": "Serious Eats"
+        },
+        {
+          "substitute": "heavy cream + lemon juice",
+          "ratio": "1 cup sour cream = 1 cup heavy cream + 1 tbsp lemon juice; rest to thicken",
+          "contexts": ["general"],
+          "caveat": "Thinner and milder; works as a pourable tangy cream, not a scoopable one.",
+          "rank": 3,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "heavy cream",
+      "aliases": ["heavy whipping cream", "double cream", "whipping cream"],
+      "substitutions": [
+        {
+          "substitute": "whole milk + melted butter",
+          "ratio": "1 cup heavy cream = 3/4 cup whole milk + 1/4 cup melted butter",
+          "contexts": ["baking", "general"],
+          "caveat": "Adds richness for cooking and baking but will NOT whip — don't use it where whipped volume is required.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "evaporated milk",
+          "ratio": "1:1",
+          "contexts": ["general"],
+          "caveat": "Good body for sauces and soups; won't whip and is slightly cooked in flavor.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        },
+        {
+          "substitute": "half-and-half",
+          "ratio": "1:1",
+          "contexts": ["general"],
+          "caveat": "Lower fat — sauces thicken less and it can break at a hard boil; won't whip.",
+          "rank": 3,
+          "source": "Serious Eats"
+        }
+      ]
+    },
+    {
+      "canonical": "brown sugar",
+      "aliases": ["light brown sugar", "dark brown sugar", "packed brown sugar"],
+      "substitutions": [
+        {
+          "substitute": "white sugar + molasses",
+          "ratio": "1 cup brown sugar = 1 cup white sugar + 1 tbsp molasses (2 tbsp for dark)",
+          "contexts": ["baking", "general"],
+          "caveat": "Restores the moisture and caramel notes brown sugar provides; whisk well to distribute.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        },
+        {
+          "substitute": "white sugar",
+          "ratio": "1:1",
+          "contexts": ["baking"],
+          "caveat": "Loses moisture and molasses flavor — baked goods turn out drier and lighter; last resort.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "cornstarch",
+      "aliases": ["corn starch", "corn flour (UK)"],
+      "substitutions": [
+        {
+          "substitute": "all-purpose flour",
+          "ratio": "Use 2 tbsp flour per 1 tbsp cornstarch",
+          "contexts": ["sauteing", "general"],
+          "caveat": "Thickens cloudier and less glossy; cook longer to lose the raw-flour taste.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "arrowroot powder",
+          "ratio": "1:1 (or slightly less)",
+          "contexts": ["general"],
+          "caveat": "Clear and glossy and good for acidic sauces, but thins if boiled hard or held long — add near the end.",
+          "rank": 2,
+          "source": "Serious Eats"
+        },
+        {
+          "substitute": "tapioca starch",
+          "ratio": "Use about 2 tsp per 1 tbsp cornstarch",
+          "contexts": ["general"],
+          "caveat": "Glossy and strong; can turn stringy if overheated.",
+          "rank": 3,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "self-rising flour",
+      "aliases": ["self raising flour", "self-raising flour"],
+      "substitutions": [
+        {
+          "substitute": "all-purpose flour + baking powder + salt",
+          "ratio": "1 cup self-rising flour = 1 cup all-purpose flour + 1 1/2 tsp baking powder + 1/4 tsp salt",
+          "contexts": ["baking"],
+          "caveat": "Whisk the leavening and salt in thoroughly; if the recipe already adds salt/leavening, don't double up.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        }
+      ]
+    },
+    {
+      "canonical": "honey",
+      "aliases": ["clover honey", "raw honey"],
+      "substitutions": [
+        {
+          "substitute": "granulated sugar + water",
+          "ratio": "1 cup honey = 1 1/4 cup sugar + 1/4 cup water",
+          "contexts": ["baking", "general"],
+          "caveat": "Less moisture retention and no honey aroma; in baking you may need to tweak liquid and browning.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        },
+        {
+          "substitute": "maple syrup",
+          "ratio": "1:1",
+          "contexts": ["baking", "general"],
+          "caveat": "Thinner with its own flavor; reduce other liquid slightly in baking.",
+          "rank": 2,
+          "source": "Serious Eats"
+        },
+        {
+          "substitute": "agave nectar",
+          "ratio": "Use about 2/3 cup agave per 1 cup honey (agave is sweeter)",
+          "contexts": ["general"],
+          "caveat": "Milder and thinner; adjust sweetness to taste.",
+          "rank": 3,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "white wine",
+      "aliases": ["dry white wine", "cooking white wine"],
+      "substitutions": [
+        {
+          "substitute": "broth + white wine vinegar",
+          "ratio": "1/2 cup white wine = 1/2 cup chicken or vegetable broth + 1 tsp white wine vinegar or lemon juice",
+          "contexts": ["sauteing", "general"],
+          "caveat": "Non-alcoholic; adds acidity for deglazing but not the wine's depth. Add acid to taste.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "white grape juice + vinegar",
+          "ratio": "1/2 cup white wine = 1/2 cup white grape juice + 1 tsp vinegar",
+          "contexts": ["general"],
+          "caveat": "Sweeter — best in dishes that can carry a little sweetness; balance with the vinegar.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "red wine",
+      "aliases": ["dry red wine", "cooking red wine"],
+      "substitutions": [
+        {
+          "substitute": "beef broth + red wine vinegar",
+          "ratio": "1/2 cup red wine = 1/2 cup beef broth + 1 tsp red wine vinegar",
+          "contexts": ["sauteing", "general"],
+          "caveat": "Non-alcoholic; savory depth without the tannins or fruit. Add vinegar to taste.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "red grape juice + vinegar",
+          "ratio": "1/2 cup red wine = 1/2 cup red grape juice + 1 tsp vinegar",
+          "contexts": ["general"],
+          "caveat": "Sweeter; best in braises and sauces that can absorb some sweetness.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "greek yogurt",
+      "aliases": ["plain greek yogurt", "greek-style yogurt", "strained yogurt"],
+      "substitutions": [
+        {
+          "substitute": "sour cream",
+          "ratio": "1:1",
+          "contexts": ["baking", "general"],
+          "caveat": "Similar tang and body with more fat; stir into hot dishes off-heat to prevent breaking.",
+          "rank": 1,
+          "source": "America's Test Kitchen"
+        },
+        {
+          "substitute": "plain yogurt, strained",
+          "ratio": "Strain regular yogurt 30-60 min to thicken, then 1:1",
+          "contexts": ["general"],
+          "caveat": "Regular yogurt is thinner — strain it or expect a looser result.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "cream cheese",
+      "aliases": ["full-fat cream cheese", "block cream cheese"],
+      "substitutions": [
+        {
+          "substitute": "mascarpone",
+          "ratio": "1:1",
+          "contexts": ["general"],
+          "caveat": "Richer and sweeter with less tang; softer set, so frostings and cheesecakes are looser.",
+          "rank": 1,
+          "source": "Serious Eats"
+        },
+        {
+          "substitute": "Greek yogurt, strained",
+          "ratio": "1:1 (strain until thick)",
+          "contexts": ["general"],
+          "caveat": "Tangier and softer with far less fat — fine for dips and spreads, weaker for set desserts.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        }
+      ]
+    },
+    {
+      "canonical": "milk",
+      "aliases": ["whole milk", "dairy milk", "cow's milk"],
+      "substitutions": [
+        {
+          "substitute": "water + butter",
+          "ratio": "1 cup milk = 1 cup water + 1 tbsp melted butter",
+          "contexts": ["baking"],
+          "caveat": "Replaces the liquid and a little fat, but not milk's proteins/sugars — browning and richness suffer.",
+          "rank": 1,
+          "source": "King Arthur Baking Company"
+        },
+        {
+          "substitute": "evaporated milk + water",
+          "ratio": "1 cup milk = 1/2 cup evaporated milk + 1/2 cup water",
+          "contexts": ["general"],
+          "caveat": "Close to whole milk once diluted; faintly cooked flavor.",
+          "rank": 2,
+          "source": "Culinary reference (common practice)"
+        },
+        {
+          "substitute": "unsweetened plant milk (soy, oat, almond)",
+          "ratio": "1:1",
+          "contexts": ["baking", "general"],
+          "caveat": "Choose unsweetened for savory dishes; flavor and protein vary by type (soy behaves closest to dairy).",
+          "rank": 3,
+          "source": "Serious Eats"
+        }
+      ]
+    },
+    {
+      "canonical": "lemon juice",
+      "aliases": ["fresh lemon juice"],
+      "substitutions": [
+        {
+          "substitute": "lime juice",
+          "ratio": "1:1",
+          "contexts": ["general"],
+          "caveat": "Similar acidity with a different aroma; fine where brightness matters more than lemon flavor.",
+          "rank": 1,
+          "source": "Culinary reference (common practice)"
+        },
+        {
+          "substitute": "white wine vinegar",
+          "ratio": "Use about half as much, to taste",
+          "contexts": ["sauteing", "general"],
+          "caveat": "Sharper and without citrus aroma — good for acidity in savory cooking, less so for flavor.",
+          "rank": 2,
+          "source": "America's Test Kitchen"
+        }
+      ]
+    }
+  ]
+}
