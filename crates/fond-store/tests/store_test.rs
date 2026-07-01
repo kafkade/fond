@@ -1036,6 +1036,64 @@ fn pantry_check_coverage_nonexistent_recipe() {
 }
 
 #[test]
+fn suggest_ranks_by_coverage_then_filters_by_max_missing() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let repo = RecipeRepository::new(&db);
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    // Fully stock adobo (6/6). Give tofu/pasta only a shared item or two.
+    pantry
+        .add_items(&[
+            "soy sauce",
+            "white vinegar",
+            "garlic",
+            "bay leaves",
+            "chicken thighs",
+            "steamed rice",
+        ])
+        .unwrap();
+
+    let candidates = repo.list_recipes().unwrap();
+
+    // No cap: adobo (100%) must rank ahead of the others.
+    let ranked = pantry.suggest(&candidates, None).unwrap();
+    assert_eq!(ranked.len(), 3);
+    assert_eq!(ranked[0].slug, "classic-chicken-adobo");
+    assert_eq!(ranked[0].coverage_pct, 100.0);
+    assert!(ranked[0].missing.is_empty());
+    // Sorted descending by coverage.
+    assert!(ranked[0].coverage_pct >= ranked[1].coverage_pct);
+    assert!(ranked[1].coverage_pct >= ranked[2].coverage_pct);
+
+    // With max_missing = 0, only the fully-covered recipe survives.
+    let make_now = pantry.suggest(&candidates, Some(0)).unwrap();
+    assert_eq!(make_now.len(), 1);
+    assert_eq!(make_now[0].slug, "classic-chicken-adobo");
+}
+
+#[test]
+fn suggest_empty_pantry_yields_no_makeable_recipes() {
+    let db = FondDb::open_memory().unwrap();
+    index_all_samples(&db);
+
+    let repo = RecipeRepository::new(&db);
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    let candidates = repo.list_recipes().unwrap();
+
+    // Nothing stocked: every recipe has many required-missing ingredients.
+    let make_now = pantry.suggest(&candidates, Some(2)).unwrap();
+    assert!(make_now.is_empty());
+
+    // Without a cap they still appear, all at 0% coverage.
+    let all = pantry.suggest(&candidates, None).unwrap();
+    assert_eq!(all.len(), 3);
+    assert!(all.iter().all(|s| s.coverage_pct == 0.0));
+}
+
+#[test]
 fn pantry_check_fuzzy_matching() {
     let db = FondDb::open_memory().unwrap();
     index_all_samples(&db);

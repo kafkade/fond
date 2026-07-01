@@ -16,6 +16,7 @@ fond search "braised pork"                    # Instant full-text search
 fond view chicken-adobo                       # Render a recipe
 fond cook chicken-adobo --serve-at 19:00      # Backward-scheduled cook mode
 fond pantry check chicken-adobo               # What do you have? 85% coverage
+fond suggest                                  # What can I cook now? Ranked by coverage
 fond grocery from-recipe chicken-adobo        # Pantry-aware shopping list
 fond plan week --add monday:dinner=chicken-adobo
 fond scoreboard --since 2025-01-01            # What have you cooked most?

@@ -138,6 +138,38 @@ enum Commands {
         exclude_allergens: bool,
     },
 
+    /// Suggest recipes you can make now, ranked by pantry coverage.
+    ///
+    /// Deterministic (no ML): scores recipes by how many ingredients your
+    /// pantry already covers (ADR-009 presence-first), sorted by coverage %
+    /// then total time. Works fully offline.
+    Suggest {
+        /// Filter by tag (repeatable, AND semantics)
+        #[arg(long, short)]
+        tag: Vec<String>,
+
+        /// Maximum total time in minutes
+        #[arg(long)]
+        max_time: Option<u32>,
+
+        /// Filter by cuisine (matches tags)
+        #[arg(long)]
+        cuisine: Option<String>,
+
+        /// Filter by source (substring match)
+        #[arg(long)]
+        source: Option<String>,
+
+        /// Only show recipes missing at most this many required ingredients
+        /// (default: 2)
+        #[arg(long)]
+        max_missing: Option<usize>,
+
+        /// Limit the number of suggestions shown
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+
     /// Manage recipe tags.
     Tag {
         /// Recipe slug (omit to list all tags)
@@ -598,6 +630,23 @@ fn main() -> Result<()> {
             remove,
             list,
         } => cmd_tag(&paths, slug, add, remove, list, &fmt),
+        Commands::Suggest {
+            tag,
+            max_time,
+            cuisine,
+            source,
+            max_missing,
+            limit,
+        } => cmd_suggest(
+            &paths,
+            &fmt,
+            tag,
+            max_time,
+            cuisine,
+            source,
+            max_missing,
+            limit,
+        ),
         Commands::Rm { slug, yes } => cmd_rm(&paths, &slug, yes, &fmt),
         Commands::Reindex => cmd_reindex(&paths, &fmt),
         Commands::Pantry { action } => match action {
@@ -1744,6 +1793,117 @@ fn cmd_pantry_check(paths: &FondPaths, slug: &str, fmt: &OutputFormat) -> Result
                     println!("\nMissing: {}", missing.join(", "));
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Default max required-missing ingredients for `fond suggest` when unset.
+const DEFAULT_SUGGEST_MAX_MISSING: usize = 2;
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_suggest(
+    paths: &FondPaths,
+    fmt: &OutputFormat,
+    tags: Vec<String>,
+    max_time: Option<u32>,
+    cuisine: Option<String>,
+    source: Option<String>,
+    max_missing: Option<usize>,
+    limit: Option<usize>,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+    let pantry = fond_store::PantryRepository::new(&db);
+
+    // Guide the user if the pantry is empty — coverage ranking needs items.
+    let present = pantry.list_items(false).context("failed to read pantry")?;
+    if present.is_empty() {
+        match fmt {
+            OutputFormat::Json => println!("[]"),
+            OutputFormat::Table => {
+                println!(
+                    "Your pantry is empty. Add items with `fond pantry add <item>...` \
+                     then run `fond suggest` again."
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    let filter = build_cli_filter(tags, max_time, cuisine, source);
+    let candidates = repo
+        .list_recipes_filtered(&filter)
+        .context("failed to list recipes")?;
+
+    let cap = max_missing.unwrap_or(DEFAULT_SUGGEST_MAX_MISSING);
+    let mut suggestions = pantry
+        .suggest(&candidates, Some(cap))
+        .context("failed to rank recipes by pantry coverage")?;
+
+    if let Some(n) = limit {
+        suggestions.truncate(n);
+    }
+
+    if suggestions.is_empty() {
+        match fmt {
+            OutputFormat::Json => println!("[]"),
+            OutputFormat::Table => {
+                if candidates.is_empty() && !filter.is_empty() {
+                    println!("No recipes match the given filters.");
+                } else if candidates.is_empty() {
+                    println!("No recipes indexed. Add .cook files and run `fond reindex`.");
+                } else {
+                    println!(
+                        "No recipes are within {cap} missing ingredient(s). \
+                         Try raising --max-missing or stocking your pantry."
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&suggestions)?);
+        }
+        OutputFormat::Table => {
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["Coverage", "Slug", "Title", "Time", "Missing"]);
+
+            for s in &suggestions {
+                let coverage = format!(
+                    "{:.0}% ({}/{})",
+                    s.coverage_pct, s.matched_count, s.total_ingredients
+                );
+                let time = if s.total_time.is_empty() {
+                    "\u{2014}".to_string()
+                } else {
+                    s.total_time.clone()
+                };
+                let missing = if s.missing.is_empty() {
+                    "\u{2713} make now".to_string()
+                } else {
+                    s.missing.join(", ")
+                };
+                table.add_row(vec![
+                    coverage,
+                    s.slug.clone(),
+                    s.title.clone(),
+                    time,
+                    missing,
+                ]);
+            }
+
+            println!("{table}");
+            println!("\n{} suggestion(s)", suggestions.len());
         }
     }
 

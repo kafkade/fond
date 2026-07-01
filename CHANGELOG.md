@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Inventory-based recipe suggestions: `fond suggest` ranks recipes by pantry coverage % (presence-first, per ADR-009), sorted by coverage then total time. Deterministic and fully offline — no ML. Supports `--tag`, `--cuisine`, `--max-time`, `--source`, `--max-missing` (default 2), `--limit`, and `--format table|json`, and surfaces the missing required ingredients per suggestion
+
 ## [1.0.0] - 2026-06-28
 
 **Data model declared stable.** The `.cook` source-of-truth format and the
