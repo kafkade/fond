@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- iPad-optimized native layout: the SwiftUI app now uses an adaptive three-column `NavigationSplitView` (sidebar collections/tags → recipe list → detail) that expands on iPad landscape/macOS and gracefully collapses to a stack under Slide Over, Stage Manager, and on iPhone
+- Side-by-side cook mode on a wide canvas: steps render beside a live panel with the plan summary and real kitchen timers (start/pause/resume/+1 min/cancel) that count down with a haptic + visual "done" alert; falls back to a single column in compact width
+- Keyboard + pointer support in the native app: selection-driven lists (Magic Keyboard arrow keys, trackpad hover) and a ⌘R shortcut to start cook mode
 - Inventory-based recipe suggestions: `fond suggest` ranks recipes by pantry coverage % (presence-first, per ADR-009), sorted by coverage then total time. Deterministic and fully offline — no ML. Supports `--tag`, `--cuisine`, `--max-time`, `--source`, `--max-missing` (default 2), `--limit`, and `--format table|json`, and surfaces the missing required ingredients per suggestion
 
 ## [1.0.0] - 2026-06-28

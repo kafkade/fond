@@ -1,93 +1,49 @@
 import SwiftUI
 import FondKit
 
-/// Root list of recipes with full-text search. Tapping a recipe pushes its
-/// detail view.
+/// Root three-column layout: sidebar (collections/tags) → recipe list → detail.
+///
+/// `NavigationSplitView` adapts automatically: on a regular-width canvas (iPad
+/// landscape, macOS, wide Stage Manager) all three columns are visible; in
+/// compact width (iPhone, Slide Over, narrow multitasking) it collapses to a
+/// navigation stack, so browse → view → cook works everywhere from one codebase.
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var query = ""
+
+    @State private var sidebar: SidebarSelection? = .all
+    @State private var selectedSlug: String?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationStack {
-            Group {
-                switch model.state {
-                case .loading:
-                    ProgressView("Loading recipes…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .failed(let message):
-                    ContentUnavailableView {
-                        Label("Couldn’t load recipes", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(message)
-                    }
-                case .ready:
-                    recipeList
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            SidebarView(selection: $sidebar)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+        } content: {
+            RecipeListView(selection: sidebar ?? .all, selectedSlug: $selectedSlug)
+                .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 460)
+        } detail: {
+            NavigationStack {
+                if let slug = selectedSlug {
+                    RecipeDetailView(slug: slug)
+                } else {
+                    ContentUnavailableView(
+                        "Select a recipe",
+                        systemImage: "fork.knife",
+                        description: Text("Pick a recipe to see its ingredients, steps, and cook mode.")
+                    )
                 }
             }
-            .navigationTitle("Fond")
-            .searchable(text: $query, prompt: "Search recipes")
+            // Reset any pushed cook-mode view when the selected recipe changes.
+            .id(selectedSlug)
         }
-    }
-
-    @ViewBuilder
-    private var recipeList: some View {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty {
-            List(model.recipes) { recipe in
-                NavigationLink(value: recipe.slug) {
-                    RecipeRow(title: recipe.title, subtitle: recipe.source,
-                              tags: recipe.tags, time: recipe.totalTime)
-                }
-            }
-            .navigationDestination(for: String.self) { slug in
-                RecipeDetailView(slug: slug)
-            }
-        } else {
-            let results = model.search(trimmed)
-            List(results) { hit in
-                NavigationLink(value: hit.slug) {
-                    RecipeRow(title: hit.title, subtitle: hit.source,
-                              tags: hit.tags, time: nil)
-                }
-            }
-            .overlay {
-                if results.isEmpty {
-                    ContentUnavailableView.search(text: trimmed)
-                }
-            }
-            .navigationDestination(for: String.self) { slug in
-                RecipeDetailView(slug: slug)
+        .navigationSplitViewStyle(.balanced)
+        // When the sidebar filter changes, clear a detail selection that is no
+        // longer in the visible list.
+        .onChange(of: sidebar) { _, newValue in
+            let visible = model.recipes(for: newValue ?? .all).map(\.slug)
+            if let slug = selectedSlug, !visible.contains(slug) {
+                selectedSlug = nil
             }
         }
-    }
-}
-
-struct RecipeRow: View {
-    let title: String
-    let subtitle: String
-    let tags: [String]
-    let time: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.headline)
-            if !subtitle.isEmpty {
-                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
-            }
-            HStack(spacing: 6) {
-                if let time, !time.isEmpty {
-                    Label(time, systemImage: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(tags.prefix(3), id: \.self) { tag in
-                    Text(tag)
-                        .font(.caption2)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.quaternary, in: Capsule())
-                }
-            }
-        }
-        .padding(.vertical, 2)
     }
 }

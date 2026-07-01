@@ -12,7 +12,7 @@ struct FondApp: App {
                 .environmentObject(model)
         }
         #if os(macOS)
-        .defaultSize(width: 900, height: 640)
+        .defaultSize(width: 1100, height: 720)
         #endif
     }
 }
