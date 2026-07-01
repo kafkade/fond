@@ -68,7 +68,7 @@ apple/
 
 Generated artifacts (`FondKit/xcframework/`, `FondKit/Sources/FondKit/fond_ffi.swift`,
 `FondApp/FondApp.xcodeproj`, `SampleData/fond.db`, and the `FondWatch*/Info.plist`
-+ `*.entitlements` XcodeGen generates from `project.yml`) are git-ignored —
+and `*.entitlements` files XcodeGen generates from `project.yml`) are git-ignored —
 recreate them with the steps below.
 
 ## Prerequisites
