@@ -50,6 +50,27 @@ enum ExportFormat {
     Paprika,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum SubstituteContext {
+    /// Applicable broadly.
+    General,
+    /// Baking — acidity, leavening, and structure matter most.
+    Baking,
+    /// Sauteing / stovetop cooking.
+    Sauteing,
+}
+
+impl From<SubstituteContext> for fond_core::substitution::CookingContext {
+    fn from(c: SubstituteContext) -> Self {
+        use fond_core::substitution::CookingContext;
+        match c {
+            SubstituteContext::General => CookingContext::General,
+            SubstituteContext::Baking => CookingContext::Baking,
+            SubstituteContext::Sauteing => CookingContext::Sauteing,
+        }
+    }
+}
+
 impl Cli {
     /// Resolve the effective output format (--json overrides --format).
     fn output_format(&self) -> OutputFormat {
@@ -323,6 +344,23 @@ enum Commands {
     Nutrition {
         /// Recipe slug (e.g., "chicken-adobo")
         slug: String,
+    },
+
+    /// Suggest ranked, sourced ingredient substitutions (advisory only).
+    ///
+    /// Looks up curated, context-aware substitutions from a bundled reference
+    /// dataset — never a generative model, and never auto-applied to a recipe.
+    Substitute {
+        /// Ingredient to substitute (e.g., "buttermilk")
+        ingredient: String,
+
+        /// Cooking context to prioritize (baking, sauteing, general)
+        #[arg(long, value_enum)]
+        context: Option<SubstituteContext>,
+
+        /// Infer context from a recipe by slug (e.g., warns on baking swaps)
+        #[arg(long)]
+        recipe: Option<String>,
     },
 
     /// Launch the web UI (Axum + HTMX, server-rendered).
@@ -726,6 +764,11 @@ fn main() -> Result<()> {
             PlanAction::Delete { plan, yes } => cmd_plan_delete(&paths, &plan, yes, &fmt),
         },
         Commands::Nutrition { slug } => cmd_nutrition(&paths, &slug, &fmt),
+        Commands::Substitute {
+            ingredient,
+            context,
+            recipe,
+        } => cmd_substitute(&paths, &ingredient, context, recipe.as_deref(), &fmt),
         Commands::Serve { port, bind } => cmd_serve(&paths, port, &bind),
     }
 }
@@ -4359,6 +4402,193 @@ fn truncate_str(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max - 1])
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Substitute
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Serialize)]
+struct SubstituteOutput<'a> {
+    ingredient: &'a str,
+    canonical: &'a str,
+    context: Option<String>,
+    context_inferred: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recipe: Option<&'a str>,
+    substitutions: &'a [fond_core::substitution::Substitution],
+    disclaimer: &'a str,
+}
+
+fn cmd_substitute(
+    paths: &FondPaths,
+    ingredient: &str,
+    context: Option<SubstituteContext>,
+    recipe: Option<&str>,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    use fond_core::substitution::{
+        CookingContext, SUBSTITUTION_DISCLAIMER, find_substitutions, infer_context,
+    };
+
+    // Resolve context: an explicit --context always wins; otherwise try to
+    // infer it from --recipe. Track whether it was inferred for messaging.
+    let explicit: Option<CookingContext> = context.map(Into::into);
+    let mut context_inferred = false;
+
+    let effective_context = match explicit {
+        Some(ctx) => Some(ctx),
+        None => match recipe {
+            Some(slug) => {
+                let rec = load_recipe_by_slug(paths, slug)?;
+                let names: Vec<String> = rec.ingredients.iter().map(|i| i.name.clone()).collect();
+                let inferred = infer_context(&rec.tags, &rec.title, &names);
+                context_inferred = inferred.is_some();
+                inferred
+            }
+            None => None,
+        },
+    };
+
+    let result = match find_substitutions(ingredient, effective_context) {
+        Some(r) => r,
+        None => {
+            let msg = format!(
+                "No curated substitutions for '{}'. The dataset is a small, \
+                 sourced seed and grows over time.",
+                ingredient.trim()
+            );
+            match fmt {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ingredient": ingredient.trim().to_lowercase(),
+                            "canonical": null,
+                            "substitutions": [],
+                            "message": msg,
+                        })
+                    );
+                }
+                OutputFormat::Table => {
+                    println!("{msg}");
+                    let available = fond_core::substitution::available_ingredients();
+                    println!("\nAvailable ingredients: {}", available.join(", "));
+                }
+            }
+            return Ok(());
+        }
+    };
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = SubstituteOutput {
+                ingredient: &result.ingredient,
+                canonical: &result.canonical,
+                context: result.context.map(|c| c.to_string()),
+                context_inferred,
+                recipe,
+                substitutions: &result.substitutions,
+                disclaimer: SUBSTITUTION_DISCLAIMER,
+            };
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Substitutions for: {}", result.canonical);
+
+            if let Some(ctx) = result.context {
+                if context_inferred {
+                    if let Some(slug) = recipe {
+                        println!("Context: {ctx} (inferred from recipe '{slug}')");
+                    } else {
+                        println!("Context: {ctx} (inferred)");
+                    }
+                } else {
+                    println!("Context: {ctx}");
+                }
+            }
+            println!();
+
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec![
+                "#",
+                "Substitute",
+                "Ratio",
+                "Context",
+                "Caveat",
+                "Source",
+            ]);
+
+            for sub in &result.substitutions {
+                let contexts = sub
+                    .contexts
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                table.add_row(vec![
+                    sub.rank.to_string(),
+                    sub.substitute.clone(),
+                    sub.ratio.clone(),
+                    contexts,
+                    sub.caveat.clone().unwrap_or_else(|| "—".to_string()),
+                    sub.source.clone(),
+                ]);
+            }
+            println!("{table}");
+
+            // Surface baking caveats prominently — a wrong baking swap is costly.
+            if result.context == Some(CookingContext::Baking) {
+                let baking_caveats: Vec<&str> = result
+                    .substitutions
+                    .iter()
+                    .filter(|s| s.applies_to(CookingContext::Baking))
+                    .filter_map(|s| s.caveat.as_deref())
+                    .collect();
+                if !baking_caveats.is_empty() {
+                    println!("\n⚠ Baking notes:");
+                    for c in baking_caveats {
+                        println!("  • {c}");
+                    }
+                }
+            }
+
+            println!("\n⚠ {SUBSTITUTION_DISCLAIMER}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Load and parse a recipe by slug (DB record + `.cook` file for fidelity).
+fn load_recipe_by_slug(paths: &FondPaths, slug: &str) -> Result<fond_domain::Recipe> {
+    let db = open_db(paths)?;
+    let repo = RecipeRepository::new(&db);
+
+    let record = repo
+        .get_recipe_by_slug(slug)
+        .context("database query failed")?
+        .with_context(|| {
+            format!("no recipe found with slug '{slug}' — run `fond list` to see available recipes")
+        })?;
+
+    let dir = recipes_dir(paths);
+    let file_path = dir.join(&record.file_path);
+
+    let content = if file_path.exists() {
+        std::fs::read_to_string(&file_path).context("failed to read recipe file")?
+    } else if !record.raw_source.is_empty() {
+        record.raw_source.clone()
+    } else {
+        anyhow::bail!(
+            "recipe file not found: {} — run `fond reindex` to repair",
+            record.file_path
+        );
+    };
+
+    fond_domain::parse_cook(&content, slug)
+        .map_err(|e| anyhow::anyhow!("failed to parse recipe: {e}"))
 }
 
 fn cmd_serve(paths: &FondPaths, port: u16, bind: &str) -> Result<()> {

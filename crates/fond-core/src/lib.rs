@@ -8,5 +8,6 @@
 pub mod ingredient_class;
 pub mod quantity;
 pub mod scale;
+pub mod substitution;
 
 pub use fond_domain::*;
