@@ -8,8 +8,23 @@ to Swift through the [`fond-ffi`](../crates/fond-ffi) crate via
 [ADR-011](../docs/adr/011-native-apple-bridge.md) for the design.
 
 Scope today: **read + cook mode** (browse, search, view, scale, cooking
-timeline). Editing/write-back, iPad-specific layouts, the Watch app, and sync
-are follow-up work.
+timeline) with an **iPad-optimized adaptive layout** (three-column split view +
+side-by-side cook mode with live kitchen timers). Editing/write-back, the Watch
+app, and sync are follow-up work.
+
+## iPad / adaptive layout
+
+`RootView` uses a three-column `NavigationSplitView` — sidebar
+(collections/tags) → recipe list → recipe detail. It adapts automatically:
+
+- **Regular width** (iPad landscape, macOS, wide Stage Manager): all three
+  columns visible; cook mode splits into steps beside a live timers + plan panel.
+- **Compact width** (iPhone, Slide Over, narrow multitasking): collapses to a
+  navigation stack; cook mode falls back to a single scrolling column.
+
+Cook mode timers are real countdowns (start/pause/resume/+1 min/cancel) with a
+haptic + visual alert on completion. Selection-driven lists give Magic Keyboard
+arrow-key navigation and trackpad hover; ⌘R starts cook mode from a recipe.
 
 ## Layout
 

@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var state: LoadState = .loading
     @Published private(set) var recipes: [RecipeSummaryDto] = []
+    @Published private(set) var tags: [TagCountDto] = []
 
     private(set) var client: FondClient?
 
@@ -29,17 +30,39 @@ final class AppModel: ObservableObject {
             _ = try client.reindex()
             self.client = client
             self.recipes = try client.listRecipes(filter: nil)
+            self.tags = (try? client.listTags()) ?? []
             self.state = .ready
         } catch {
             self.state = .failed(Self.describe(error))
         }
     }
 
-    /// Full-text search; returns [] on empty/whitespace queries.
-    func search(_ query: String) -> [SearchResultDto] {
+    /// Recipes scoped to a sidebar selection. `.all` returns everything; a tag
+    /// selection filters server-side via the Rust core's `RecipeFilter`.
+    func recipes(for selection: SidebarSelection) -> [RecipeSummaryDto] {
+        switch selection {
+        case .all:
+            return recipes
+        case .tag(let name):
+            guard let client else { return [] }
+            let filter = RecipeFilterDto(tags: [name], maxTimeMinutes: nil, source: nil)
+            return (try? client.listRecipes(filter: filter)) ?? []
+        }
+    }
+
+    /// Full-text search, optionally scoped to a sidebar selection's tag.
+    /// Returns [] on empty/whitespace queries.
+    func search(_ query: String, in selection: SidebarSelection = .all) -> [SearchResultDto] {
         guard let client,
               !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return (try? client.search(query: query, filter: nil)) ?? []
+        let filter: RecipeFilterDto?
+        switch selection {
+        case .all:
+            filter = nil
+        case .tag(let name):
+            filter = RecipeFilterDto(tags: [name], maxTimeMinutes: nil, source: nil)
+        }
+        return (try? client.search(query: query, filter: filter)) ?? []
     }
 
     // MARK: - Seeding

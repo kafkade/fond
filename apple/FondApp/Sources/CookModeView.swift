@@ -1,19 +1,75 @@
 import SwiftUI
 import FondKit
 
-/// Cook mode: builds the recipe's timeline and schedules it backward from a
-/// chosen serve time, surfacing per-step start times, active/passive work, and
-/// timer durations.
+/// Cook mode: builds the recipe's timeline, schedules it backward from a chosen
+/// serve time, and — on a wide canvas (iPad landscape / macOS) — lays the steps
+/// out beside a live panel of kitchen timers and the plan summary. In compact
+/// width it falls back to a single scrolling column. Timers are real countdowns
+/// started from a step's known duration.
 struct CookModeView: View {
     let slug: String
     let title: String
     @EnvironmentObject private var model: AppModel
+    @StateObject private var timers = KitchenTimerModel()
 
     @State private var serveAt = Date().addingTimeInterval(2 * 3600)
     @State private var schedule: ScheduledTimelineDto?
     @State private var error: String?
 
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSize
+    private var isWide: Bool { hSize == .regular }
+    #else
+    private var isWide: Bool { true }
+    #endif
+
     var body: some View {
+        Group {
+            if isWide {
+                wideLayout
+            } else {
+                compactLayout
+            }
+        }
+        .navigationTitle("Cook · \(title)")
+        .task(id: slug) { reschedule() }
+    }
+
+    // MARK: - Wide (iPad landscape / macOS): steps beside live timers
+
+    private var wideLayout: some View {
+        HStack(spacing: 0) {
+            List {
+                if let schedule {
+                    Section("Steps") {
+                        ForEach(schedule.nodes) { stepRow($0) }
+                    }
+                } else {
+                    placeholderSection
+                }
+            }
+            .frame(minWidth: 320)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    serveCard
+                    if let schedule { planCard(schedule) }
+                    timersCard
+                }
+                .padding()
+            }
+            .frame(width: 360)
+            #if os(iOS)
+            .background(Color(uiColor: .systemGroupedBackground))
+            #endif
+        }
+    }
+
+    // MARK: - Compact (iPhone / Slide Over): single column
+
+    private var compactLayout: some View {
         List {
             Section {
                 DatePicker("Serve at", selection: $serveAt)
@@ -22,21 +78,14 @@ struct CookModeView: View {
                 Text("Steps are scheduled backward from this time. Untimed steps stay untimed.")
             }
 
-            if let schedule {
-                Section("Plan") {
-                    summaryRow("Start cooking", Self.timeLabel(schedule.startAt))
-                    summaryRow("Hands-on time", Self.durationLabel(schedule.totalActiveSeconds))
-                    summaryRow("Hands-off time", Self.durationLabel(schedule.totalPassiveSeconds))
-                    if schedule.hasUntimedSteps {
-                        Label("Some steps have no known duration", systemImage: "questionmark.circle")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+            if timers.hasTimers {
+                Section("Timers") { timerCards }
+            }
 
+            if let schedule {
+                Section("Plan") { planRows(schedule) }
                 Section("Steps") {
-                    ForEach(schedule.nodes) { scheduled in
-                        timelineRow(scheduled)
-                    }
+                    ForEach(schedule.nodes) { stepRow($0) }
                 }
             } else if let error {
                 Section { Text(error).foregroundStyle(.red) }
@@ -44,11 +93,20 @@ struct CookModeView: View {
                 Section { ProgressView() }
             }
         }
-        .navigationTitle("Cook · \(title)")
-        .task(id: slug) { reschedule() }
     }
 
-    private func timelineRow(_ scheduled: ScheduledNodeDto) -> some View {
+    // MARK: - Shared pieces
+
+    @ViewBuilder
+    private var placeholderSection: some View {
+        if let error {
+            Section { Text(error).foregroundStyle(.red) }
+        } else {
+            Section { ProgressView() }
+        }
+    }
+
+    private func stepRow(_ scheduled: ScheduledNodeDto) -> some View {
         let node = scheduled.node
         return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .trailing) {
@@ -60,7 +118,7 @@ struct CookModeView: View {
             }
             .frame(width: 64, alignment: .trailing)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(node.label)
                 HStack(spacing: 8) {
                     Text(node.taskType.label)
@@ -72,10 +130,84 @@ struct CookModeView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
+                if let duration = node.duration, duration.seconds > 0 {
+                    Button {
+                        timers.start(label: node.label, seconds: Int(duration.seconds))
+                    } label: {
+                        Label("Start timer", systemImage: "timer")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(.top, 2)
+                }
             }
             Spacer()
         }
         .padding(.vertical, 2)
+    }
+
+    private var serveCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Serve time").font(.headline)
+            DatePicker("Serve at", selection: $serveAt)
+                .labelsHidden()
+                .onChange(of: serveAt) { _, _ in reschedule() }
+            Text("Steps are scheduled backward from this time. Untimed steps stay untimed.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func planCard(_ schedule: ScheduledTimelineDto) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Plan").font(.headline)
+            planRows(schedule)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func planRows(_ schedule: ScheduledTimelineDto) -> some View {
+        summaryRow("Start cooking", Self.timeLabel(schedule.startAt))
+        summaryRow("Hands-on time", Self.durationLabel(schedule.totalActiveSeconds))
+        summaryRow("Hands-off time", Self.durationLabel(schedule.totalPassiveSeconds))
+        if schedule.hasUntimedSteps {
+            Label("Some steps have no known duration", systemImage: "questionmark.circle")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var timersCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Timers").font(.headline)
+                Spacer()
+                if timers.hasTimers {
+                    Button("Clear all") { timers.cancelAll() }
+                        .font(.caption)
+                }
+            }
+            if timers.hasTimers {
+                timerCards
+            } else {
+                Text("Start a timer from any timed step to count it down here.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var timerCards: some View {
+        ForEach(timers.timers) { timer in
+            KitchenTimerView(
+                timer: timer,
+                onPause: { timers.pause(timer.id) },
+                onResume: { timers.resume(timer.id) },
+                onAddMinute: { timers.addMinute(timer.id) },
+                onCancel: { timers.cancel(timer.id) }
+            )
+        }
     }
 
     private func summaryRow(_ label: String, _ value: String) -> some View {

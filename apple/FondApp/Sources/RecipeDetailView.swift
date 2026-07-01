@@ -91,6 +91,7 @@ struct RecipeDetailView: View {
                 } label: {
                     Label("Start cook mode", systemImage: "flame")
                 }
+                .keyboardShortcut("r", modifiers: .command)
             }
         }
         #if os(iOS)
