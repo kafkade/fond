@@ -2871,3 +2871,56 @@ fn substitute_help() {
         .stdout(predicate::str::contains("--context"))
         .stdout(predicate::str::contains("--recipe"));
 }
+
+// ───────────────────────────────────────────────────────────────────
+// doctor
+// ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn doctor_clean_dir_reports_ok() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[ok]"))
+        .stdout(predicate::str::contains("No file-sync tool detected"));
+}
+
+#[test]
+fn doctor_warns_when_db_in_synced_folder() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    // Simulate a Syncthing-managed folder around the data dir.
+    fs::create_dir_all(tmp.path().join(".stfolder")).unwrap();
+
+    fond(&tmp)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"))
+        .stdout(predicate::str::contains("Syncthing"))
+        .stdout(predicate::str::contains("fond reindex"));
+}
+
+#[test]
+fn doctor_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    fs::create_dir_all(tmp.path().join(".stfolder")).unwrap();
+
+    let output = fond(&tmp)
+        .args(["--json", "doctor"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    assert_eq!(json["synced_folder_detected"], true);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["signals"][0]["tool"], "Syncthing");
+}
