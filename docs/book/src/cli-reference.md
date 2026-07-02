@@ -59,6 +59,15 @@ Delete a recipe (file and index entry). Use `--yes` to skip confirmation.
 
 Rebuild the SQLite database from `.cook` files. The database is a derived index — your `.cook` files are the source of truth, so this is always safe.
 
+### `fond doctor`
+
+Check your setup for common problems. Currently it warns if your data directory (and therefore `fond.db`) appears to be inside a folder managed by a file-sync tool (Syncthing, Dropbox, iCloud Drive, Google Drive, OneDrive, or git). The derived database must never be synced — see [Syncing Your Recipes](./syncing.md). Advisory only; supports `--format json`.
+
+```bash
+fond doctor
+fond doctor --format json
+```
+
 ### `fond import paprika <path>`
 
 Import recipes from a Paprika archive (`.paprikarecipes` or `.paprikarecipe`).

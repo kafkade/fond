@@ -222,6 +222,9 @@ enum Commands {
     /// Rebuild the search index from .cook files on disk.
     Reindex,
 
+    /// Check your setup for common problems (e.g. a synced `fond.db`).
+    Doctor,
+
     /// Manage your pantry (what's in your kitchen).
     Pantry {
         #[command(subcommand)]
@@ -293,6 +296,12 @@ enum Commands {
         /// Target number of servings
         #[arg(long, group = "scale_mode")]
         servings: Option<u32>,
+
+        /// Apply deterministic non-linear rules (sub-linear leavening,
+        /// to-taste seasoning bands, cook-time/pan suggestions). Linear is
+        /// the default; each adjusted line is explained and reversible.
+        #[arg(long)]
+        rules: bool,
     },
 
     /// Add a note to a recipe, or list existing notes.
@@ -687,6 +696,7 @@ fn main() -> Result<()> {
         ),
         Commands::Rm { slug, yes } => cmd_rm(&paths, &slug, yes, &fmt),
         Commands::Reindex => cmd_reindex(&paths, &fmt),
+        Commands::Doctor => cmd_doctor(&paths, &fmt),
         Commands::Pantry { action } => match action {
             PantryAction::Add { items } => cmd_pantry_add(&paths, &items, &fmt),
             PantryAction::Rm { items } => cmd_pantry_rm(&paths, &items, &fmt),
@@ -731,9 +741,12 @@ fn main() -> Result<()> {
             serve_at,
             plan,
         } => cmd_cook(&paths, &slug, serve_at.as_deref(), plan, &fmt),
-        Commands::Scale { slug, to, servings } => {
-            cmd_scale(&paths, &slug, to.as_deref(), servings, &fmt)
-        }
+        Commands::Scale {
+            slug,
+            to,
+            servings,
+            rules,
+        } => cmd_scale(&paths, &slug, to.as_deref(), servings, rules, &fmt),
         Commands::Note { slug, text, delete } => cmd_note(&paths, &slug, &text, delete, &fmt),
         Commands::Rate { slug, score } => cmd_rate(&paths, &slug, score, &fmt),
         Commands::Scoreboard { since, limit } => {
@@ -799,6 +812,52 @@ fn content_hash(content: &str) -> String {
 
 fn bytes_hash(bytes: &[u8]) -> String {
     hash_value(bytes)
+}
+
+/// Monotonic counter used to give each atomic-write temp file a unique name.
+static NEXT_TMP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Write `bytes` to `path` atomically.
+///
+/// The data is written to a uniquely named temporary file in the *same*
+/// directory and then `rename`d onto `path`. Because the temp file shares the
+/// destination's filesystem, the final `rename` is atomic, so a reader — or a
+/// file-sync daemon such as Syncthing, Dropbox, or iCloud watching the folder —
+/// only ever observes the complete previous file or the complete new one, never
+/// a half-written `.cook` file. See `docs/book/src/syncing.md` and ADR-012.
+///
+/// On any failure the temporary file is removed on a best-effort basis so no
+/// stray `*.tmp` artifacts are left behind.
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("fond-write");
+    let unique = format!(
+        "{file_name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT_TMP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let tmp_path = parent.join(unique);
+
+    let result = (|| -> Result<()> {
+        std::fs::write(&tmp_path, bytes)
+            .with_context(|| format!("failed to write temp file: {}", tmp_path.display()))?;
+        std::fs::rename(&tmp_path, path).with_context(|| {
+            format!(
+                "failed to rename {} -> {}",
+                tmp_path.display(),
+                path.display()
+            )
+        })?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 fn open_editor(file_path: &std::path::Path) -> Result<bool> {
@@ -955,7 +1014,7 @@ fn add_from_file(source: &std::path::Path, dest_dir: &std::path::Path) -> Result
         );
     }
 
-    std::fs::copy(source, &dest)
+    atomic_write(&dest, content.as_bytes())
         .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
 
     Ok(dest)
@@ -978,7 +1037,7 @@ fn add_from_title(title: &str, dest_dir: &std::path::Path, is_json: bool) -> Res
          -- Add your ingredients and steps below.\n\
          -- See https://cooklang.org for Cooklang syntax.\n\n"
     );
-    std::fs::write(&dest, &content)
+    atomic_write(&dest, content.as_bytes())
         .with_context(|| format!("failed to write {}", dest.display()))?;
 
     // Open editor unless in JSON mode
@@ -1508,12 +1567,9 @@ fn cmd_tag(
     let content = std::fs::read_to_string(&file_path).context("failed to read recipe file")?;
     let updated_content = fond_domain::update_tags_in_cook_source(&content, &new_tags);
 
-    // Write atomically: temp file then rename
-    let tmp_path = file_path.with_extension("cook.tmp");
-    std::fs::write(&tmp_path, &updated_content)
-        .with_context(|| format!("failed to write temp file: {}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, &file_path)
-        .with_context(|| format!("failed to rename temp file to {}", file_path.display()))?;
+    // Write atomically so file-sync never sees a partial file (see atomic_write).
+    atomic_write(&file_path, updated_content.as_bytes())
+        .with_context(|| format!("failed to update {}", file_path.display()))?;
 
     // Re-parse and re-index from the updated file
     let stem = file_path
@@ -2495,9 +2551,12 @@ fn cmd_scale(
     slug: &str,
     to: Option<&str>,
     servings: Option<u32>,
+    rules: bool,
     fmt: &OutputFormat,
 ) -> Result<()> {
-    use fond_core::scale::{ScaleError, ScaleFactor, parse_scale_arg, scale_recipe};
+    use fond_core::scale::{
+        ScaleError, ScaleFactor, ScaleOptions, parse_scale_arg, scale_recipe_with,
+    };
 
     let db = open_db(paths)?;
     let repo = RecipeRepository::new(&db);
@@ -2545,12 +2604,13 @@ fn cmd_scale(
         }
     };
 
-    let scaled = scale_recipe(&recipe, factor).map_err(|e| match e {
-        ScaleError::NoServingsMetadata => anyhow::anyhow!("{e}"),
-        ScaleError::UnparseableServings(_) => anyhow::anyhow!("{e}"),
-        ScaleError::InvalidFactor(_) => anyhow::anyhow!("{e}"),
-        ScaleError::InvalidServings(_) => anyhow::anyhow!("{e}"),
-    })?;
+    let scaled =
+        scale_recipe_with(&recipe, factor, ScaleOptions { rules }).map_err(|e| match e {
+            ScaleError::NoServingsMetadata => anyhow::anyhow!("{e}"),
+            ScaleError::UnparseableServings(_) => anyhow::anyhow!("{e}"),
+            ScaleError::InvalidFactor(_) => anyhow::anyhow!("{e}"),
+            ScaleError::InvalidServings(_) => anyhow::anyhow!("{e}"),
+        })?;
 
     match fmt {
         OutputFormat::Json => {
@@ -2570,6 +2630,10 @@ fn print_scaled_recipe(scaled: &fond_core::scale::ScaledRecipe) {
         scaled.title,
         format_scale(scaled.scale_factor)
     );
+
+    if scaled.rules_applied {
+        println!("Mode: rule-based non-linear (linear values shown for reference)");
+    }
 
     if let Some(ref orig) = scaled.original_servings {
         if let Some(ref target) = scaled.scaled_servings {
@@ -2600,8 +2664,48 @@ fn print_scaled_recipe(scaled: &fond_core::scale::ScaledRecipe) {
             (Some(q), None) => format!("{q} "),
             _ => String::new(),
         };
-        let marker = if ing.warning.is_some() { " ⚠" } else { "" };
-        println!("  - {qty}{}{marker}", ing.name);
+        // In rules mode, adjusted lines carry a preserved linear reference —
+        // only show it when it actually differs from the displayed quantity.
+        let reference = match &ing.linear_quantity {
+            Some(lin) if Some(lin) != ing.scaled_quantity.as_ref() => match &ing.unit {
+                Some(u) => format!(" (linear: {lin} {u})"),
+                None => format!(" (linear: {lin})"),
+            },
+            _ => String::new(),
+        };
+        let marker = if ing.explanation.is_some() {
+            " ★"
+        } else if ing.warning.is_some() {
+            " ⚠"
+        } else {
+            ""
+        };
+        println!("  - {qty}{}{reference}{marker}", ing.name);
+    }
+
+    // Per-line explanations for rule-adjusted ingredients.
+    let explained: Vec<&fond_core::scale::ScaledIngredient> = scaled
+        .ingredients
+        .iter()
+        .filter(|i| i.explanation.is_some())
+        .collect();
+    if !explained.is_empty() {
+        println!("\n## Adjustments\n");
+        for ing in explained {
+            if let Some(ref e) = ing.explanation {
+                println!("  ★ {}: {}", ing.name, e);
+            }
+        }
+    }
+
+    if let Some(ref ts) = scaled.time_suggestion {
+        println!("\n## Cook Time\n");
+        println!("  ⏱ {ts}");
+    }
+
+    if let Some(ref pn) = scaled.pan_note {
+        println!("\n## Pan / Equipment\n");
+        println!("  🍳 {pn}");
     }
 
     if !scaled.warnings.is_empty() {
@@ -3714,7 +3818,7 @@ fn cmd_import_paprika(
     let dest_dir = recipes_dir(paths);
     for prep in &prepared {
         let dest = dest_dir.join(&prep.file_name);
-        std::fs::write(&dest, &prep.cook_text)
+        atomic_write(&dest, prep.cook_text.as_bytes())
             .with_context(|| format!("failed to write {}", dest.display()))?;
 
         let hash = content_hash(&prep.cook_text);
@@ -3783,7 +3887,7 @@ fn cmd_import_url(paths: &FondPaths, url: &str, dry_run: bool, fmt: &OutputForma
     let dest_dir = recipes_dir(paths);
     for prep in &prepared {
         let dest = dest_dir.join(&prep.file_name);
-        std::fs::write(&dest, &prep.cook_text)
+        atomic_write(&dest, prep.cook_text.as_bytes())
             .with_context(|| format!("failed to write {}", dest.display()))?;
 
         let hash = content_hash(&prep.cook_text);
@@ -4071,7 +4175,7 @@ fn cmd_review_accept(paths: &FondPaths, id: &str, fmt: &OutputFormat) -> Result<
     };
 
     let dest = recipes_dir(paths).join(&file_name);
-    std::fs::write(&dest, &cook_text)
+    atomic_write(&dest, cook_text.as_bytes())
         .with_context(|| format!("failed to write {}", dest.display()))?;
     let hash = content_hash(&cook_text);
     recipe_repo
@@ -4204,7 +4308,7 @@ fn copy_review_asset(paths: &FondPaths, source_path: &std::path::Path) -> Result
     let file_name = format!("{hash}.{ext}");
     let dest = dir.join(&file_name);
     if !dest.exists() {
-        std::fs::write(&dest, bytes)
+        atomic_write(&dest, &bytes)
             .with_context(|| format!("failed to write {}", dest.display()))?;
     }
 
@@ -4285,6 +4389,142 @@ fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Doctor
+// ═══════════════════════════════════════════════════════════════════
+
+/// A sync-tool signal detected on an ancestor of the fond data directory.
+#[derive(Debug, Serialize)]
+struct SyncSignal {
+    /// Human name of the detected sync tool.
+    tool: String,
+    /// The directory or marker path that triggered detection.
+    marker: String,
+}
+
+/// Heuristically detect whether `data_dir` lives inside a folder managed by a
+/// general-purpose file-sync tool.
+///
+/// This is offline and best-effort: it walks the ancestors of `data_dir`
+/// looking for well-known marker files/directories (Syncthing's `.stfolder`,
+/// Dropbox's `.dropbox`, a `.git` repo) and cloud-folder path names (Dropbox,
+/// OneDrive, Google Drive, iCloud's `Mobile Documents`). False positives are
+/// acceptable — the result only drives advisory output, never an error.
+fn detect_synced_folder(data_dir: &std::path::Path) -> Vec<SyncSignal> {
+    let mut signals = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Marker files/dirs that sit inside a synced root.
+    let markers: &[(&str, &str)] = &[
+        (".stfolder", "Syncthing"),
+        (".stignore", "Syncthing"),
+        (".dropbox", "Dropbox"),
+        (".dropbox.cache", "Dropbox"),
+        (".git", "Git"),
+    ];
+    // Directory names that themselves indicate a cloud-sync root.
+    let named_dirs: &[(&str, &str)] = &[
+        ("Dropbox", "Dropbox"),
+        ("OneDrive", "OneDrive"),
+        ("Google Drive", "Google Drive"),
+        ("GoogleDrive", "Google Drive"),
+        ("My Drive", "Google Drive"),
+        ("Mobile Documents", "iCloud Drive"),
+    ];
+
+    for ancestor in data_dir.ancestors() {
+        for (marker, tool) in markers {
+            let candidate = ancestor.join(marker);
+            if candidate.exists() && seen.insert((*tool).to_string()) {
+                signals.push(SyncSignal {
+                    tool: (*tool).to_string(),
+                    marker: candidate.display().to_string(),
+                });
+            }
+        }
+
+        if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
+            for (needle, tool) in named_dirs {
+                if name == *needle && seen.insert((*tool).to_string()) {
+                    signals.push(SyncSignal {
+                        tool: (*tool).to_string(),
+                        marker: ancestor.display().to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    signals
+}
+
+fn cmd_doctor(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
+    let data_dir = &paths.data_dir;
+    let db_path = data_dir.join("fond.db");
+    let db_exists = db_path.exists();
+    let signals = detect_synced_folder(data_dir);
+    let synced = !signals.is_empty();
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "data_dir": data_dir.display().to_string(),
+                "db_path": db_path.display().to_string(),
+                "db_exists": db_exists,
+                "synced_folder_detected": synced,
+                "signals": signals,
+                "ok": !synced,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("fond doctor");
+            println!("  data dir: {}", data_dir.display());
+            println!(
+                "  database: {} ({})",
+                db_path.display(),
+                if db_exists {
+                    "present"
+                } else {
+                    "not created yet"
+                }
+            );
+            println!();
+
+            if signals.is_empty() {
+                println!("[ok] No file-sync tool detected around your data directory.");
+                println!(
+                    "     Recipes and photos are safe to sync; just keep fond.db out of the synced set."
+                );
+            } else {
+                println!(
+                    "[warning] Your fond data directory looks like it is inside a synced folder:"
+                );
+                for s in &signals {
+                    println!("            - {} (detected via {})", s.tool, s.marker);
+                }
+                println!();
+                println!("  fond.db is a DERIVED, device-specific index — it must NOT be synced.");
+                println!(
+                    "  Syncing it between machines can corrupt or clobber each device's index."
+                );
+                println!();
+                println!("  Recommended:");
+                println!(
+                    "    - Sync only the recipes/ and photos/ folders (your source of truth)."
+                );
+                println!(
+                    "    - Exclude fond.db, fond.db-wal, and fond.db-shm from the synced set."
+                );
+                println!("    - Run `fond reindex` on each device to rebuild its local index.");
+                println!("  See the \"Syncing Your Recipes\" guide for per-tool ignore patterns.");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -4612,4 +4852,110 @@ fn cmd_serve(paths: &FondPaths, port: u16, bind: &str) -> Result<()> {
     tokio::runtime::Runtime::new()
         .context("failed to create async runtime")?
         .block_on(fond_web::serve(config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_write_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("recipe.cook");
+
+        atomic_write(&dest, b"hello world").unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn atomic_write_overwrites_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("recipe.cook");
+        std::fs::write(&dest, b"old contents").unwrap();
+
+        atomic_write(&dest, b"new contents").unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new contents");
+    }
+
+    #[test]
+    fn atomic_write_leaves_no_temp_artifacts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("recipe.cook");
+
+        atomic_write(&dest, b"content").unwrap();
+
+        // Only the destination file should remain — no stray *.tmp files that a
+        // sync daemon could pick up.
+        let entries: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, vec!["recipe.cook".to_string()]);
+    }
+
+    #[test]
+    fn atomic_write_temp_shares_destination_dir() {
+        // The temp file must be created in the destination's own directory so the
+        // final rename is atomic on the same filesystem. Make the directory
+        // read-only-for-creation by pointing at a missing parent: writing must
+        // fail rather than silently fall back to another directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let missing_dir = tmp.path().join("does-not-exist");
+        let dest = missing_dir.join("recipe.cook");
+
+        let result = atomic_write(&dest, b"content");
+
+        assert!(result.is_err(), "writing into a missing dir should error");
+        // And it must not have created the missing directory as a side effect.
+        assert!(!missing_dir.exists());
+    }
+
+    #[test]
+    fn detect_synced_folder_clean_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("fond");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        assert!(detect_synced_folder(&data_dir).is_empty());
+    }
+
+    #[test]
+    fn detect_synced_folder_flags_syncthing_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let synced_root = tmp.path().join("SyncedStuff");
+        let data_dir = synced_root.join("fond");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::create_dir_all(synced_root.join(".stfolder")).unwrap();
+
+        let signals = detect_synced_folder(&data_dir);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].tool, "Syncthing");
+    }
+
+    #[test]
+    fn detect_synced_folder_flags_cloud_dir_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("Dropbox").join("fond");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        let signals = detect_synced_folder(&data_dir);
+        assert!(signals.iter().any(|s| s.tool == "Dropbox"));
+    }
+
+    #[test]
+    fn detect_synced_folder_dedupes_tool() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Two Syncthing markers on different ancestors should report once.
+        let outer = tmp.path().join("outer");
+        let inner = outer.join("inner");
+        let data_dir = inner.join("fond");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::create_dir_all(outer.join(".stfolder")).unwrap();
+        std::fs::create_dir_all(inner.join(".stfolder")).unwrap();
+
+        let signals = detect_synced_folder(&data_dir);
+        assert_eq!(signals.iter().filter(|s| s.tool == "Syncthing").count(), 1);
+    }
 }

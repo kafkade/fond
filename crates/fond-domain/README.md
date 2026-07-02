@@ -13,6 +13,7 @@ This crate contains pure data structures and type definitions with no I/O or sid
 ## Utilities
 
 - `parse()` / `emit_cook()` — Cooklang round-trip: parse a `.cook` file into a `Recipe` and emit it back without data loss.
+- **`CookDocument`** — Lossless structured **edit** layer over raw `.cook` text: splits a file into ordered frontmatter + body blocks, offers surgical metadata setters (title, servings, tags, times, description, source, `image`) and body/step edits, and re-emits **byte-for-byte when unedited**. Powers native app editing via `fond-ffi`.
 - `slugify()` / `title_from_stem()` — Derive URL-safe slugs from titles and vice versa.
 - `parse_time_minutes()` — Normalize human-readable time strings ("1 hour 30 min") to minutes.
 - `escape_fts5_query()` — Sanitize user input for safe FTS5 full-text queries.

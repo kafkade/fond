@@ -7,11 +7,13 @@ to Swift through the [`fond-ffi`](../crates/fond-ffi) crate via
 [UniFFI](https://mozilla.github.io/uniffi-rs/). See
 [ADR-011](../docs/adr/011-native-apple-bridge.md) for the design.
 
-Scope today: **read + cook mode** (browse, search, view, scale, cooking
-timeline) with an **iPad-optimized adaptive layout** (three-column split view +
-side-by-side cook mode with live kitchen timers) and a **watchOS companion** for
-active cook timers, wrist alerts, and a "Next up" complication. Editing/write-back
-and sync are follow-up work.
+Scope today: **read, cook mode, and editing** (browse, search, view, scale,
+cooking timeline; plus create/edit/delete recipes and attach photos, written
+back to the canonical `.cook` files with a lossless Cooklang round-trip) with an
+**iPad-optimized adaptive layout** (three-column split view + side-by-side cook
+mode with live kitchen timers) and a **watchOS companion** for active cook
+timers, wrist alerts, and a "Next up" complication. Multi-device sync is
+follow-up work.
 
 ## watchOS companion (active timers & alerts)
 

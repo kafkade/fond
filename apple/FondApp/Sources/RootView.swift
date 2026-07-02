@@ -24,7 +24,7 @@ struct RootView: View {
         } detail: {
             NavigationStack {
                 if let slug = selectedSlug {
-                    RecipeDetailView(slug: slug)
+                    RecipeDetailView(slug: slug, selectedSlug: $selectedSlug)
                 } else {
                     ContentUnavailableView(
                         "Select a recipe",

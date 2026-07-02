@@ -19,6 +19,7 @@ pub mod reindex;
 mod repo;
 mod scoreboard;
 mod user;
+mod write;
 
 pub use cook_log::*;
 pub use db::*;
@@ -35,3 +36,4 @@ pub use reindex::{ReindexReport, reindex};
 pub use repo::*;
 pub use scoreboard::*;
 pub use user::*;
+pub use write::*;

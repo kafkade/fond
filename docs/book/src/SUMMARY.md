@@ -11,6 +11,7 @@
 - [Importing Recipes](./importing.md)
 - [Exporting Recipes](./exporting.md)
 - [Pantry & Grocery Lists](./pantry-grocery.md)
+- [Syncing Your Recipes](./syncing.md)
 
 ---
 

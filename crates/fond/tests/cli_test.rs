@@ -2357,7 +2357,111 @@ fn scale_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--to"))
-        .stdout(predicate::str::contains("--servings"));
+        .stdout(predicate::str::contains("--servings"))
+        .stdout(predicate::str::contains("--rules"));
+}
+
+#[test]
+fn scale_rules_adjusts_leavening_sublinearly() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "2x", "--rules"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("rule-based non-linear"))
+        .stdout(predicate::str::contains("Adjustments"))
+        .stdout(predicate::str::contains("sub-linear"))
+        // Leavening is NOT the linear 2 tsp; linear reference is shown.
+        .stdout(predicate::str::contains("(linear: 2 tsp)"))
+        // Flour still scales linearly.
+        .stdout(predicate::str::contains("4 cups"));
+}
+
+#[test]
+fn scale_rules_seasoning_band_and_time_suggestion() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    // A recipe with a cook time to exercise the advisory suggestion.
+    let timed = "\
+---
+title: Braise Test
+servings: 4
+cook_time: 2 hours
+---
+
+Season @beef chuck{2 lbs} with @salt{1 tsp} and simmer in @beef stock{3 cups}.
+";
+    write_fixture(&tmp, "braise-test.cook", timed);
+    fond(&tmp).arg("reindex").assert().success();
+
+    fond(&tmp)
+        .args(["scale", "braise-test", "--to", "2x", "--rules"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("to-taste band"))
+        .stdout(predicate::str::contains("Cook Time"))
+        .stdout(predicate::str::contains("NOT auto-scaled"))
+        .stdout(predicate::str::contains("Pan / Equipment"));
+}
+
+#[test]
+fn scale_rules_json_has_new_fields() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out = fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "2", "--rules", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(parsed["rules_applied"], true);
+    let bp = parsed["ingredients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "baking powder")
+        .expect("baking powder present");
+    assert!(bp["explanation"].is_string());
+    assert_eq!(bp["linear_quantity"], "2");
+}
+
+#[test]
+fn scale_without_rules_stays_linear() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    write_fixture(&tmp, "scaling-test.cook", SCALING_RECIPE);
+    fond(&tmp).arg("reindex").assert().success();
+
+    let out = fond(&tmp)
+        .args(["scale", "scaling-test", "--to", "2", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(parsed["rules_applied"], false);
+    let bp = parsed["ingredients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "baking powder")
+        .unwrap();
+    // Pure linear: baking powder doubles to 2 tsp, no rule fields present.
+    assert_eq!(bp["scaled_quantity"], "2");
+    assert!(bp.get("explanation").is_none());
+    assert!(bp.get("linear_quantity").is_none());
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2766,4 +2870,57 @@ fn substitute_help() {
         .success()
         .stdout(predicate::str::contains("--context"))
         .stdout(predicate::str::contains("--recipe"));
+}
+
+// ───────────────────────────────────────────────────────────────────
+// doctor
+// ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn doctor_clean_dir_reports_ok() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+
+    fond(&tmp)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[ok]"))
+        .stdout(predicate::str::contains("No file-sync tool detected"));
+}
+
+#[test]
+fn doctor_warns_when_db_in_synced_folder() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    // Simulate a Syncthing-managed folder around the data dir.
+    fs::create_dir_all(tmp.path().join(".stfolder")).unwrap();
+
+    fond(&tmp)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"))
+        .stdout(predicate::str::contains("Syncthing"))
+        .stdout(predicate::str::contains("fond reindex"));
+}
+
+#[test]
+fn doctor_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    fs::create_dir_all(tmp.path().join(".stfolder")).unwrap();
+
+    let output = fond(&tmp)
+        .args(["--json", "doctor"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    assert_eq!(json["synced_folder_detected"], true);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["signals"][0]["tool"], "Syncthing");
 }
