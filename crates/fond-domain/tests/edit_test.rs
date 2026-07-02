@@ -64,7 +64,10 @@ fn metadata_edit_preserves_body_verbatim() {
 #[test]
 fn metadata_edit_keeps_body_bytes_on_frontmatter_recipe() {
     let content = load_fixture("chicken-adobo.cook");
-    let (_, body_original) = content.split_once("\n---\n").expect("frontmatter");
+    // Everything after the closing frontmatter fence. Split on the bare fence
+    // rather than "\n---\n" so the test is agnostic to the checkout's line
+    // endings — Windows CI checks `.cook` fixtures out with CRLF.
+    let body_original = content.splitn(3, "---").nth(2).expect("frontmatter");
 
     let mut doc = CookDocument::parse(&content);
     doc.set_scalar("servings", &["servings"], Some("8"));
@@ -127,8 +130,12 @@ fn set_tags_preserves_block_style() {
     let mut doc = CookDocument::parse(&content);
     doc.set_tags(&["filipino".into(), "braise".into()]);
     let emitted = doc.emit();
+    // Normalise line endings for the structural check: fixtures are checked out
+    // as CRLF on Windows, and the emitted block style mirrors that.
     assert!(
-        emitted.contains("tags:\n  - filipino\n  - braise"),
+        emitted
+            .replace("\r\n", "\n")
+            .contains("tags:\n  - filipino\n  - braise"),
         "{emitted}"
     );
     let reparsed = parse_cook(&emitted, "chicken-adobo").unwrap();

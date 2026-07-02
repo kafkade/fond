@@ -110,6 +110,10 @@ pub struct CookDocument {
     body_leading: String,
     /// Parsed body blocks.
     blocks: Vec<Block>,
+    /// The document's dominant line ending (`"\n"` or `"\r\n"`), preserved so
+    /// edits don't silently rewrite a CRLF file with LF fences (and vice
+    /// versa) — Windows checkouts and hand-authored files may use CRLF.
+    newline: String,
     fm_dirty: bool,
     body_dirty: bool,
 }
@@ -117,6 +121,7 @@ pub struct CookDocument {
 impl CookDocument {
     /// Parse raw `.cook` text into an editable document.
     pub fn parse(raw: &str) -> Self {
+        let newline = detect_newline(raw);
         if let Some((inner, prefix_len)) = parse_frontmatter(raw) {
             let prefix_original = raw[..prefix_len].to_string();
             let body_original = raw[prefix_len..].to_string();
@@ -128,6 +133,7 @@ impl CookDocument {
                 body_original,
                 body_leading,
                 blocks,
+                newline,
                 fm_dirty: false,
                 body_dirty: false,
             }
@@ -140,6 +146,7 @@ impl CookDocument {
                 body_original: raw.to_string(),
                 body_leading,
                 blocks,
+                newline,
                 fm_dirty: false,
                 body_dirty: false,
             }
@@ -192,6 +199,7 @@ impl CookDocument {
             body_original: String::new(),
             body_leading: "\n".to_string(),
             blocks,
+            newline: "\n".to_string(),
             fm_dirty: true,
             body_dirty: true,
         }
@@ -391,6 +399,7 @@ impl CookDocument {
         }
 
         let mut out = String::new();
+        let nl = self.newline.as_str();
 
         // A document may gain a frontmatter fence it didn't originally have
         // (e.g. the first metadata field set on a bare `.cook` file).
@@ -399,12 +408,14 @@ impl CookDocument {
 
         if has_fm {
             if self.fm_dirty || created_fm {
-                out.push_str("---\n");
+                out.push_str("---");
+                out.push_str(nl);
                 for line in &self.fm_lines {
                     out.push_str(line);
-                    out.push('\n');
+                    out.push_str(nl);
                 }
-                out.push_str("---\n");
+                out.push_str("---");
+                out.push_str(nl);
             } else {
                 out.push_str(&self.prefix_original);
             }
@@ -414,7 +425,7 @@ impl CookDocument {
             let mut leading = if self.fm_present {
                 // Ensure at least one blank line separates fence from body.
                 if self.body_leading.is_empty() {
-                    "\n".to_string()
+                    nl.to_string()
                 } else {
                     self.body_leading.clone()
                 }
@@ -424,30 +435,31 @@ impl CookDocument {
             // When the frontmatter was rebuilt it already ends in a newline;
             // the body_leading supplies the blank separator line.
             if self.blocks.is_empty() {
-                leading.push('\n');
+                leading.push_str(nl);
                 out.push_str(&leading);
-                return normalize_trailing(out);
+                return normalize_trailing(out, nl);
             }
             out.push_str(&leading);
+            let separator = format!("{nl}{nl}");
             let joined = self
                 .blocks
                 .iter()
-                .map(|b| b.text.trim_end().to_string())
+                .map(|b| b.text.trim_end().replace("\r\n", "\n").replace('\n', nl))
                 .collect::<Vec<_>>()
-                .join("\n\n");
+                .join(&separator);
             out.push_str(&joined);
-            out.push('\n');
+            out.push_str(nl);
         } else {
             // A newly-created frontmatter needs a blank line before a body
             // that never had one.
             if created_fm && !self.body_original.starts_with('\n') && !self.body_original.is_empty()
             {
-                out.push('\n');
+                out.push_str(nl);
             }
             out.push_str(&self.body_original);
         }
 
-        normalize_trailing(out)
+        normalize_trailing(out, nl)
     }
 
     /// Emit and compute the resulting slug from the title.
@@ -456,15 +468,27 @@ impl CookDocument {
     }
 }
 
-fn normalize_trailing(mut s: String) -> String {
-    // Collapse an accidental trailing blank line, keep exactly one newline.
-    while s.ends_with("\n\n") {
-        s.pop();
+fn normalize_trailing(mut s: String, nl: &str) -> String {
+    // Collapse accidental trailing blank lines, keeping exactly one newline.
+    let double = format!("{nl}{nl}");
+    while s.ends_with(&double) {
+        for _ in 0..nl.len() {
+            s.pop();
+        }
     }
     if !s.ends_with('\n') {
-        s.push('\n');
+        s.push_str(nl);
     }
     s
+}
+
+/// Detect a raw document's dominant line ending. Returns `"\r\n"` if the first
+/// line break is a CRLF, otherwise `"\n"`.
+fn detect_newline(raw: &str) -> String {
+    match raw.find('\n') {
+        Some(i) if i > 0 && raw.as_bytes()[i - 1] == b'\r' => "\r\n".to_string(),
+        _ => "\n".to_string(),
+    }
 }
 
 /// Detect a leading `--- ... ---` frontmatter fence.
