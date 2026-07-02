@@ -234,3 +234,305 @@ fn schedule_rejects_bad_datetime() {
     let err = c.schedule_timeline("chicken-adobo".to_string(), "not-a-date".to_string());
     assert!(err.is_err());
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Editing / write-back
+// ═══════════════════════════════════════════════════════════════════
+
+use fond_ffi::{CookBlockDto, CookBlockKindDto, FondError, NewRecipeDto, SaveRecipeDto};
+
+fn recipe_file(dir: &TempDir, name: &str) -> Option<String> {
+    fs::read_to_string(dir.path().join("recipes").join(name)).ok()
+}
+
+#[test]
+fn create_recipe_writes_file_and_indexes() {
+    let dir = fixture();
+    let c = client(&dir);
+
+    let dto = NewRecipeDto {
+        title: "Test Soup".to_string(),
+        servings: Some("4".to_string()),
+        tags: vec!["soup".to_string(), "quick".to_string()],
+        description: Some("A quick test soup.".to_string()),
+        source: None,
+        steps: vec!["Simmer @water{1%L} with @salt{1%tsp}.".to_string()],
+    };
+    let created = c.create_recipe(dto).unwrap();
+    assert_eq!(created.slug, "test-soup");
+
+    // File exists on disk and re-parses to the same recipe.
+    let on_disk = recipe_file(&dir, "test-soup.cook").expect("file written");
+    assert!(on_disk.contains("title: Test Soup"));
+
+    // Indexed and fetchable.
+    let fetched = c.get_recipe("test-soup".to_string()).unwrap().unwrap();
+    assert_eq!(fetched.servings.as_deref(), Some("4"));
+    assert!(fetched.ingredients.iter().any(|i| i.name == "water"));
+    assert_eq!(c.count_recipes().unwrap(), 3);
+}
+
+#[test]
+fn create_recipe_rejects_duplicate_slug() {
+    let dir = fixture();
+    let c = client(&dir);
+    let dto = NewRecipeDto {
+        title: "Chicken Adobo".to_string(),
+        servings: None,
+        tags: vec![],
+        description: None,
+        source: None,
+        steps: vec!["Do a thing.".to_string()],
+    };
+    let err = c.create_recipe(dto);
+    assert!(matches!(err, Err(FondError::AlreadyExists { .. })));
+}
+
+#[test]
+fn get_recipe_for_edit_exposes_raw_blocks_and_hash() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(editor.title, "Chicken Adobo");
+    assert!(!editor.content_hash.is_empty());
+    // Raw block text keeps inline Cooklang markup (unlike RecipeDto steps).
+    assert!(
+        editor
+            .blocks
+            .iter()
+            .any(|b| b.text.contains("@chicken thighs{1%kg}"))
+    );
+    // Parsed ingredient preview is present.
+    assert!(
+        editor
+            .ingredients
+            .iter()
+            .any(|i| i.name == "chicken thighs")
+    );
+}
+
+#[test]
+fn save_recipe_metadata_reflects_on_disk_and_reparses() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+
+    let save = SaveRecipeDto {
+        slug: "chicken-adobo".to_string(),
+        base_content_hash: editor.content_hash,
+        title: editor.title,
+        servings: Some("8".to_string()),
+        description: editor.description,
+        source: editor.source,
+        source_url: editor.source_url,
+        prep_time: editor.prep_time,
+        cook_time: editor.cook_time,
+        total_time: editor.total_time,
+        image: editor.image,
+        tags: editor.tags,
+        blocks: editor.blocks,
+    };
+    let saved = c.save_recipe(save).unwrap();
+    assert_eq!(saved.servings.as_deref(), Some("8"));
+
+    let on_disk = recipe_file(&dir, "chicken-adobo.cook").unwrap();
+    assert!(on_disk.contains("servings: 8"));
+    // No recipe count change; still re-parses.
+    assert_eq!(c.count_recipes().unwrap(), 2);
+}
+
+#[test]
+fn save_recipe_editing_a_step_updates_ingredients() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("simple-scrambled-eggs".to_string())
+        .unwrap()
+        .unwrap();
+
+    let mut blocks = editor.blocks.clone();
+    blocks.push(CookBlockDto {
+        kind: CookBlockKindDto::Step,
+        text: "Garnish with @chives{1%tbsp}.".to_string(),
+        section: None,
+    });
+
+    let save = SaveRecipeDto {
+        slug: "simple-scrambled-eggs".to_string(),
+        base_content_hash: editor.content_hash,
+        title: editor.title,
+        servings: editor.servings,
+        description: editor.description,
+        source: editor.source,
+        source_url: editor.source_url,
+        prep_time: editor.prep_time,
+        cook_time: editor.cook_time,
+        total_time: editor.total_time,
+        image: editor.image,
+        tags: editor.tags,
+        blocks,
+    };
+    c.save_recipe(save).unwrap();
+
+    let fetched = c
+        .get_recipe("simple-scrambled-eggs".to_string())
+        .unwrap()
+        .unwrap();
+    assert!(fetched.ingredients.iter().any(|i| i.name == "chives"));
+}
+
+#[test]
+fn save_recipe_rejects_stale_base_hash() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+
+    let save = SaveRecipeDto {
+        slug: "chicken-adobo".to_string(),
+        base_content_hash: "deadbeefdeadbeef".to_string(), // stale
+        title: editor.title,
+        servings: Some("6".to_string()),
+        description: editor.description,
+        source: editor.source,
+        source_url: editor.source_url,
+        prep_time: editor.prep_time,
+        cook_time: editor.cook_time,
+        total_time: editor.total_time,
+        image: editor.image,
+        tags: editor.tags,
+        blocks: editor.blocks,
+    };
+    let err = c.save_recipe(save);
+    assert!(matches!(err, Err(FondError::Conflict { .. })));
+}
+
+#[test]
+fn save_recipe_title_change_renames_file() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+
+    let save = SaveRecipeDto {
+        slug: "chicken-adobo".to_string(),
+        base_content_hash: editor.content_hash,
+        title: "Weeknight Adobo".to_string(),
+        servings: editor.servings,
+        description: editor.description,
+        source: editor.source,
+        source_url: editor.source_url,
+        prep_time: editor.prep_time,
+        cook_time: editor.cook_time,
+        total_time: editor.total_time,
+        image: editor.image,
+        tags: editor.tags,
+        blocks: editor.blocks,
+    };
+    let saved = c.save_recipe(save).unwrap();
+    assert_eq!(saved.slug, "weeknight-adobo");
+
+    assert!(recipe_file(&dir, "weeknight-adobo.cook").is_some());
+    assert!(recipe_file(&dir, "chicken-adobo.cook").is_none());
+    assert!(c.get_recipe("chicken-adobo".to_string()).unwrap().is_none());
+    assert!(
+        c.get_recipe("weeknight-adobo".to_string())
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(c.count_recipes().unwrap(), 2);
+}
+
+#[test]
+fn save_recipe_source_writes_raw() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+
+    let new_raw = editor.raw_source.replace("servings: 4", "servings: 10");
+    let saved = c
+        .save_recipe_source("chicken-adobo".to_string(), new_raw, editor.content_hash)
+        .unwrap();
+    assert_eq!(saved.servings.as_deref(), Some("10"));
+    assert!(
+        recipe_file(&dir, "chicken-adobo.cook")
+            .unwrap()
+            .contains("servings: 10")
+    );
+}
+
+#[test]
+fn attach_photo_stores_bytes_and_sets_image() {
+    let dir = fixture();
+    let c = client(&dir);
+    let editor = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+
+    let rel = c
+        .attach_photo(
+            "chicken-adobo".to_string(),
+            b"fake-jpeg-bytes".to_vec(),
+            "JPG".to_string(),
+            editor.content_hash,
+        )
+        .unwrap();
+    assert!(rel.starts_with("photos/"));
+    assert!(rel.ends_with(".jpg"));
+
+    // Photo bytes are on disk.
+    assert!(dir.path().join(&rel).exists());
+    // The .cook frontmatter records the image link.
+    assert!(
+        recipe_file(&dir, "chicken-adobo.cook")
+            .unwrap()
+            .contains(&format!("image: {rel}"))
+    );
+    // And it survives a reload.
+    let reloaded = c
+        .get_recipe_for_edit("chicken-adobo".to_string())
+        .unwrap()
+        .unwrap();
+    assert_eq!(reloaded.image.as_deref(), Some(rel.as_str()));
+}
+
+#[test]
+fn delete_recipe_removes_file_and_index() {
+    let dir = fixture();
+    let c = client(&dir);
+    assert!(c.delete_recipe("chicken-adobo".to_string()).unwrap());
+    assert_eq!(c.count_recipes().unwrap(), 1);
+    assert!(recipe_file(&dir, "chicken-adobo.cook").is_none());
+    assert!(!c.delete_recipe("chicken-adobo".to_string()).unwrap());
+}
+
+#[test]
+fn preview_ingredients_parses_inline_markup() {
+    let dir = fixture();
+    let c = client(&dir);
+    let ings = c
+        .preview_ingredients(vec![
+            "Whisk @eggs{3} with @milk{50%ml}.".to_string(),
+            "Season with @salt{1%pinch}.".to_string(),
+        ])
+        .unwrap();
+    let names: Vec<_> = ings.iter().map(|i| i.name.as_str()).collect();
+    assert!(names.contains(&"eggs"));
+    assert!(names.contains(&"milk"));
+    assert!(names.contains(&"salt"));
+}

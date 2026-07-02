@@ -7,8 +7,10 @@
 //! never see internal types directly, so the FFI ABI stays decoupled from
 //! internal refactors.
 //!
-//! Scope is intentionally **read + cook mode**. Editing / write-back is
-//! deferred to a later iteration.
+//! Scope covers read, cook mode, **and editing**: browse/search/view/scale/
+//! timeline plus create, edit (metadata + steps), photo attach, and delete —
+//! all writing back to the canonical `.cook` files with a lossless Cooklang
+//! round-trip.
 
 mod client;
 mod dto;

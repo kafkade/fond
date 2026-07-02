@@ -65,6 +65,16 @@ final class AppModel: ObservableObject {
         return (try? client.search(query: query, filter: filter)) ?? []
     }
 
+    // MARK: - Mutations
+
+    /// Re-read the recipe list and tag counts from the index after a write.
+    /// Cheap for a single-household library, so it runs on the main actor.
+    func reload() {
+        guard let client else { return }
+        recipes = (try? client.listRecipes(filter: nil)) ?? recipes
+        tags = (try? client.listTags()) ?? tags
+    }
+
     // MARK: - Seeding
 
     /// Create `~/Library/Application Support/fond/recipes`, copying any bundled

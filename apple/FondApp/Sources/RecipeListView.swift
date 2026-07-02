@@ -9,6 +9,7 @@ struct RecipeListView: View {
     let selection: SidebarSelection
     @Binding var selectedSlug: String?
     @State private var query = ""
+    @State private var showingNew = false
 
     var body: some View {
         Group {
@@ -31,6 +32,18 @@ struct RecipeListView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .searchable(text: $query, placement: .automatic, prompt: "Search recipes")
+        .toolbar {
+            ToolbarItem {
+                Button { showingNew = true } label: {
+                    Label("New Recipe", systemImage: "plus")
+                }
+                .disabled(model.state != .ready)
+            }
+        }
+        .sheet(isPresented: $showingNew) {
+            RecipeEditView(mode: .create, onSaved: { slug in selectedSlug = slug })
+                .environmentObject(model)
+        }
     }
 
     private var title: String {

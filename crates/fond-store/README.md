@@ -11,6 +11,7 @@ The database is a **derived index** — `.cook` recipe files on disk are the sou
 - **Schema migrations** via [refinery](https://crates.io/crates/refinery) — idempotent, embedded SQL migrations.
 - **Tag management** — list tags with counts, query tags per recipe, add/remove tags (writes back to `.cook` files).
 - **Reindex** — rebuild the entire database from `.cook` files on disk. Content-hash based skip for unchanged files.
+- **Single-recipe writes** — `write_recipe_file`, `read_recipe_file`, `delete_recipe`, and `remove_old_file_after_rename` persist an individual recipe: the `.cook` file is written first (source of truth), then just that recipe's rows are upserted in the derived index. Includes `content_hash`/`bytes_hash` helpers for optimistic-concurrency guards and content-addressed photos. Powers native app editing via `fond-ffi`.
 
 ## Storage Model
 
