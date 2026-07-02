@@ -826,6 +826,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 ### Phase 8 — Moonshots *(Research)*
 
 - Multi-recipe meal-time coordination (oven/stove contention solver); community recipe sharing (opt-in, ownership-preserving); voice cook mode.
+  - **Multi-recipe coordination — delivered** ([ADR-016](docs/adr/016-multi-recipe-coordination.md)): `fond cook a b c --serve-at 19:00` merges N single-recipe DAGs onto one shared eat-time and resolves finite oven/burner/cook contention with a resource-aware backward list-scheduling heuristic (`--ovens/--burners/--cooks`), reporting unavoidable conflicts honestly rather than fabricating a feasible schedule. Drives the TUI cook mode via a flattened merged plan. Heuristic (not optimal); timing accuracy `[Validation Required]`.
 
 ### 13.1 Roadmap at a glance
 
@@ -840,6 +841,8 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 | 6 | Smart Features | Research | OCR / AI |
 | 7 | Sync | Research | Multi-device |
 | 8 | Moonshots | Research | Coordination / community |
+
+Phase 8 progress: multi-recipe meal coordination (oven/stove contention solver) is delivered — see [ADR-016](docs/adr/016-multi-recipe-coordination.md).
 
 ---
 
@@ -939,7 +942,7 @@ Ten ADRs covering the load-bearing technical decisions. Each: context → decisi
 - **Context:** Principle #8 — realistic backward-scheduled timelines with active/passive time and dependencies.
 - **Decision:** Model steps as a **directed acyclic graph** with `{duration, task_type, depends_on}`; compute a **backward schedule** from a target eat-time (latest-start per node via reverse topological pass). Durations come from `~timer{}` annotations plus heuristic parsing of step text; unparseable timing stays untimed (never fabricated).
 - **Alternatives rejected:** *Flat sum of all durations* — ignores parallelism, wildly overestimates; *forward-only scheduling* — can't answer "when do I start?"; *ML timing prediction* — no data, overkill, Research-tier.
-- **Consequences:** Single-recipe scheduling ships in Phase 2; multi-recipe resource contention (oven/stove) is a genuinely hard Phase 8 extension. Heuristic timing accuracy is `[Validation Required]`.
+- **Consequences:** Single-recipe scheduling ships in Phase 2; multi-recipe resource contention (oven/stove) is a genuinely hard Phase 8 extension — now delivered via a resource-aware backward list-scheduling heuristic ([ADR-016](docs/adr/016-multi-recipe-coordination.md)). Heuristic timing accuracy is `[Validation Required]`.
 
 #### ADR-009 — Pantry & grocery model 🟡 `[Validation Required]`
 
@@ -1003,7 +1006,7 @@ data model STABLE (end Phase 3) ─► Phase 4 web ─► Phase 5 native
 | Web scraping | Every site | schema.org sites + a few authed parsers | Best-effort, isolated, documented gaps |
 | Ingredient ontology | Complete normalized graph | Seed set, grows per phase | User-extendable dataset |
 | Density conversion | Every ingredient | Common ingredients only | Refuse gracefully when unknown |
-| Timeline | Multi-recipe coordination | Single-recipe backward schedule | Multi-recipe is Phase 8 |
+| Timeline | Multi-recipe coordination | Single-recipe + heuristic multi-recipe contention solver | Multi-recipe delivered (ADR-016); heuristic, not optimal |
 | Scaling | Physically accurate (incl. time) | Linear + warnings | Never auto-scale time |
 | Pantry | Full quantity tracking | Presence-first, opt-in quantity | Avoid tedium trap |
 | Nutrition | Lab-accurate | USDA estimates | Informational + disclaimer |

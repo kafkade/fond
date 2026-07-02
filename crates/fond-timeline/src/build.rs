@@ -2,6 +2,7 @@ use fond_domain::Recipe;
 
 use crate::classify::classify_task_type;
 use crate::duration::{extract_duration_from_text, parse_duration_str};
+use crate::infer::infer_resource;
 use crate::model::{DurationSource, NodeId, StepDuration, Timeline, TimelineNode};
 
 /// Build an unscheduled timeline DAG from a recipe.
@@ -24,6 +25,9 @@ pub fn build_timeline(recipe: &Recipe) -> Timeline {
         let timer_names: Vec<Option<String>> = step.timers.iter().map(|t| t.name.clone()).collect();
         let task_type = classify_task_type(&step.body, &timer_names);
 
+        // Infer the kitchen resource this step occupies (oven/stove/cook).
+        let resource = infer_resource(&step.body, task_type);
+
         let label = build_label(step);
 
         // Conservative sequential dependencies
@@ -39,8 +43,25 @@ pub fn build_timeline(recipe: &Recipe) -> Timeline {
             label,
             task_type,
             duration,
+            resource,
             depends_on,
         });
+    }
+
+    // Propagate oven temperature forward within the recipe: a temperature
+    // stated in a preheat step ("preheat to 325°F") carries to the later oven
+    // steps (bake/roast) that actually occupy the oven but don't restate the
+    // temperature, until a new temperature is set. Without this, the real
+    // oven-occupying step carries no temperature and contention between dishes
+    // at incompatible temperatures cannot be detected.
+    let mut current_oven_temp: Option<crate::resource::OvenTemp> = None;
+    for node in &mut nodes {
+        if node.resource.is_oven() {
+            match &node.resource.oven_temp {
+                Some(t) => current_oven_temp = Some(t.clone()),
+                None => node.resource.oven_temp = current_oven_temp.clone(),
+            }
+        }
     }
 
     Timeline {
@@ -193,6 +214,35 @@ mod tests {
         assert!(tl.nodes[0].depends_on.is_empty());
         assert_eq!(tl.nodes[1].depends_on, vec![NodeId(0)]);
         assert_eq!(tl.nodes[2].depends_on, vec![NodeId(1)]);
+    }
+
+    #[test]
+    fn oven_temp_propagates_from_preheat_to_later_oven_steps() {
+        let recipe = make_recipe(vec![
+            step(0, "Preheat oven to 325F", vec![]),
+            step(
+                1,
+                "Roast turkey for 180 minutes",
+                vec![timer(None, Some("180 minutes"))],
+            ),
+            step(2, "Rest turkey for 10 minutes", vec![]),
+        ]);
+        let tl = build_timeline(&recipe);
+        // Preheat states the temperature.
+        assert!(tl.nodes[0].resource.is_oven());
+        assert_eq!(
+            tl.nodes[0].resource.oven_temp.as_ref().unwrap().fahrenheit,
+            325
+        );
+        // The roast step occupies the oven but doesn't restate the temperature;
+        // it must inherit 325°F so contention can be detected.
+        assert!(tl.nodes[1].resource.is_oven());
+        assert_eq!(
+            tl.nodes[1].resource.oven_temp.as_ref().unwrap().fahrenheit,
+            325
+        );
+        // The rest step is not an oven step and stays untouched.
+        assert!(!tl.nodes[2].resource.is_oven());
     }
 
     #[test]
