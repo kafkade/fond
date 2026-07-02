@@ -123,7 +123,14 @@ pub fn parse_cook(content: &str, file_stem: &str) -> Result<Recipe, DomainError>
                                     timers.push(Timer { name, duration });
                                 }
                             }
-                            _ => {}
+                            cooklang::Item::InlineQuantity { index } => {
+                                // Inline quantities like "350F" or "2 cups" are
+                                // preserved verbatim so text meaning (e.g. oven
+                                // temperatures) is not lost from the step body.
+                                if let Some(q) = scaled.inline_quantities.get(*index) {
+                                    body.push_str(&format!("{q}"));
+                                }
+                            }
                         }
                     }
 

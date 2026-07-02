@@ -271,9 +271,15 @@ enum Commands {
     },
 
     /// Plan a cooking timeline or enter interactive cook mode.
+    ///
+    /// Pass one recipe for a single-dish timeline, or several to coordinate
+    /// them into one meal — merging their steps and resolving oven/stove/cook
+    /// contention so everything finishes at `--serve-at`.
     Cook {
-        /// Recipe slug (e.g., "chicken-adobo")
-        slug: String,
+        /// Recipe slug(s). Two or more coordinate a single meal
+        /// (e.g. `fond cook turkey stuffing pie --serve-at 18:00`).
+        #[arg(required = true)]
+        slugs: Vec<String>,
 
         /// Target serve time (HH:MM format, local time)
         #[arg(long)]
@@ -282,6 +288,18 @@ enum Commands {
         /// Print static timeline table instead of entering TUI mode
         #[arg(long)]
         plan: bool,
+
+        /// Number of ovens available (default 1, temperature-exclusive)
+        #[arg(long)]
+        ovens: Option<u32>,
+
+        /// Number of stove burners available (default 4)
+        #[arg(long)]
+        burners: Option<u32>,
+
+        /// Number of cooks — simultaneous hands-on tasks (default 1)
+        #[arg(long)]
+        cooks: Option<u32>,
     },
 
     /// Scale a recipe's quantities by a multiplier or target servings.
@@ -776,10 +794,22 @@ fn main() -> Result<()> {
             Ok(())
         }
         Commands::Cook {
-            slug,
+            slugs,
             serve_at,
             plan,
-        } => cmd_cook(&paths, &slug, serve_at.as_deref(), plan, &fmt),
+            ovens,
+            burners,
+            cooks,
+        } => cmd_cook(
+            &paths,
+            &slugs,
+            serve_at.as_deref(),
+            plan,
+            ovens,
+            burners,
+            cooks,
+            &fmt,
+        ),
         Commands::Scale {
             slug,
             to,
@@ -2418,16 +2448,46 @@ fn cmd_export(
 // Cook (timeline)
 // ═══════════════════════════════════════════════════════════════════
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_cook(
     paths: &FondPaths,
-    slug: &str,
+    slugs: &[String],
     serve_at_str: Option<&str>,
     plan: bool,
+    ovens: Option<u32>,
+    burners: Option<u32>,
+    cooks: Option<u32>,
     fmt: &OutputFormat,
 ) -> Result<()> {
     let db = open_db(paths)?;
-    let repo = RecipeRepository::new(&db);
 
+    // Resource configuration (defaults model a common home kitchen).
+    let mut resources = fond_timeline::KitchenResources::default();
+    if let Some(o) = ovens {
+        resources.ovens = o.max(1);
+    }
+    if let Some(b) = burners {
+        resources.burners = b.max(1);
+    }
+    if let Some(c) = cooks {
+        resources.cooks = c.max(1);
+    }
+
+    if slugs.len() <= 1 {
+        let slug = &slugs[0];
+        cmd_cook_single(paths, &db, slug, serve_at_str, plan, fmt)
+    } else {
+        cmd_cook_meal(paths, &db, slugs, serve_at_str, plan, resources, fmt)
+    }
+}
+
+/// Load a recipe (DB record + parsed `.cook`) for cook planning.
+fn load_recipe_for_cook(
+    paths: &FondPaths,
+    db: &FondDb,
+    slug: &str,
+) -> Result<(fond_store::RecipeRecord, fond_domain::Recipe)> {
+    let repo = RecipeRepository::new(db);
     let record = repo
         .get_recipe_by_slug(slug)
         .context("database query failed")?
@@ -2435,7 +2495,6 @@ fn cmd_cook(
             format!("no recipe found with slug '{slug}' — run `fond list` to see available recipes")
         })?;
 
-    // Parse the .cook file for full recipe with steps/timers
     let dir = recipes_dir(paths);
     let file_path = dir.join(&record.file_path);
     let content = if file_path.exists() {
@@ -2450,6 +2509,32 @@ fn cmd_cook(
     };
     let recipe = fond_domain::parse_cook(&content, slug)
         .map_err(|e| anyhow::anyhow!("failed to parse recipe: {e}"))?;
+    Ok((record, recipe))
+}
+
+/// Parse an `HH:MM` serve time into the next matching local datetime.
+fn parse_serve_at(sat: &str) -> Result<chrono::NaiveDateTime> {
+    let serve_time = chrono::NaiveTime::parse_from_str(sat, "%H:%M")
+        .or_else(|_| chrono::NaiveTime::parse_from_str(sat, "%H:%M:%S"))
+        .context("Invalid time format — use HH:MM (e.g., 19:00)")?;
+    let today = chrono::Local::now().date_naive();
+    let mut serve_at = today.and_time(serve_time);
+    if serve_at < chrono::Local::now().naive_local() {
+        serve_at = (today + chrono::Duration::days(1)).and_time(serve_time);
+    }
+    Ok(serve_at)
+}
+
+/// Single-recipe cook planning (unchanged behavior).
+fn cmd_cook_single(
+    paths: &FondPaths,
+    db: &FondDb,
+    slug: &str,
+    serve_at_str: Option<&str>,
+    plan: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    let (record, recipe) = load_recipe_for_cook(paths, db, slug)?;
 
     // Build timeline DAG
     let timeline = fond_timeline::build_timeline(&recipe);
@@ -2461,15 +2546,7 @@ fn cmd_cook(
 
     // Parse optional serve-at time
     let scheduled = if let Some(sat) = serve_at_str {
-        let serve_time = chrono::NaiveTime::parse_from_str(sat, "%H:%M")
-            .or_else(|_| chrono::NaiveTime::parse_from_str(sat, "%H:%M:%S"))
-            .context("Invalid time format — use HH:MM (e.g., 19:00)")?;
-
-        let today = chrono::Local::now().date_naive();
-        let mut serve_at = today.and_time(serve_time);
-        if serve_at < chrono::Local::now().naive_local() {
-            serve_at = (today + chrono::Duration::days(1)).and_time(serve_time);
-        }
+        let serve_at = parse_serve_at(sat)?;
         Some(fond_timeline::schedule_backward(&timeline, serve_at))
     } else {
         None
@@ -2522,7 +2599,7 @@ fn cmd_cook(
         io::stdin().lock().read_line(&mut note_input)?;
         let note_text = note_input.trim().to_string();
 
-        let user_id = default_user_id(&db);
+        let user_id = default_user_id(db);
         let now = chrono::Local::now();
         let started = now - chrono::Duration::seconds(cook_result.cook_duration.as_secs() as i64);
         let entry = fond_store::NewCookLog {
@@ -2534,13 +2611,227 @@ fn cmd_cook(
             total_steps: cook_result.total_steps as i32,
             notes: note_text,
         };
-        let log_repo = fond_store::CookLogRepository::new(&db);
+        let log_repo = fond_store::CookLogRepository::new(db);
         log_repo.save(&entry).context("failed to save cook log")?;
         println!("  Cook log saved.");
     }
     println!();
 
     Ok(())
+}
+
+/// Multi-recipe meal coordination.
+fn cmd_cook_meal(
+    paths: &FondPaths,
+    db: &FondDb,
+    slugs: &[String],
+    serve_at_str: Option<&str>,
+    plan: bool,
+    resources: fond_timeline::KitchenResources,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    // Coordination is meaningless without a shared deadline.
+    let sat = serve_at_str.context(
+        "--serve-at is required when coordinating multiple recipes (e.g. --serve-at 19:00)",
+    )?;
+    let serve_at = parse_serve_at(sat)?;
+
+    // Load every recipe and build its timeline.
+    let mut records = Vec::with_capacity(slugs.len());
+    let mut recipes = Vec::with_capacity(slugs.len());
+    let mut timelines = Vec::with_capacity(slugs.len());
+    for slug in slugs {
+        let (record, recipe) = load_recipe_for_cook(paths, db, slug)?;
+        let timeline = fond_timeline::build_timeline(&recipe);
+        if timeline.nodes.is_empty() {
+            eprintln!("Warning: recipe '{slug}' has no steps and will be skipped.");
+        }
+        records.push(record);
+        recipes.push(recipe);
+        timelines.push(timeline);
+    }
+
+    // Merge and schedule the coordinated meal.
+    let meal = fond_timeline::merge_timelines(&timelines);
+    let sched = fond_timeline::schedule_meal(&meal, serve_at, resources);
+
+    let use_static = plan || matches!(fmt, OutputFormat::Json) || !atty::is(atty::Stream::Stdout);
+
+    if use_static {
+        match fmt {
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&sched)?),
+            OutputFormat::Table => print_meal_timeline(&sched),
+        }
+        return Ok(());
+    }
+
+    // TUI mode: flatten the coordinated meal into a single driveable timeline.
+    let (meal_recipe, meal_schedule, index_to_recipe) = flatten_meal(&recipes, &sched);
+    let cook_result = tui::run_cook_mode(meal_recipe, Some(meal_schedule))?;
+
+    println!();
+    println!("  Meal complete: {}", cook_result.recipe_title);
+    let dur_mins = cook_result.cook_duration.as_secs() / 60;
+    let dur_secs = cook_result.cook_duration.as_secs() % 60;
+    println!(
+        "  Steps: {}/{} | Duration: {}:{:02}",
+        cook_result.steps_completed, cook_result.total_steps, dur_mins, dur_secs,
+    );
+    if !sched.conflicts.is_empty() {
+        println!(
+            "  Note: {} resource conflict(s) were coordinated around.",
+            sched.conflicts.len()
+        );
+    }
+
+    // Save one cook log per contributing recipe.
+    print!("  Save meal to cook log? [Y/n] ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().lock().read_line(&mut input)?;
+    let save = input.trim().is_empty() || input.trim().eq_ignore_ascii_case("y");
+
+    if save {
+        print!("  Add a note? (enter text, or press Enter to skip): ");
+        io::stdout().flush()?;
+        let mut note_input = String::new();
+        io::stdin().lock().read_line(&mut note_input)?;
+        let note_text = note_input.trim().to_string();
+
+        // Per-recipe completed-step counts derived from the flattened session.
+        let mut completed_per_recipe = vec![0usize; recipes.len()];
+        for (synth_idx, &ri) in index_to_recipe.iter().enumerate() {
+            if synth_idx < cook_result.steps_completed {
+                completed_per_recipe[ri] += 1;
+            }
+        }
+
+        let user_id = default_user_id(db);
+        let now = chrono::Local::now();
+        let started = now - chrono::Duration::seconds(cook_result.cook_duration.as_secs() as i64);
+        let log_repo = fond_store::CookLogRepository::new(db);
+        for (ri, record) in records.iter().enumerate() {
+            let entry = fond_store::NewCookLog {
+                recipe_slug: record.slug.clone(),
+                user_id,
+                started_at: started.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                finished_at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                steps_completed: completed_per_recipe[ri] as i32,
+                total_steps: recipes[ri].steps.len() as i32,
+                notes: note_text.clone(),
+            };
+            log_repo.save(&entry).context("failed to save cook log")?;
+        }
+        println!("  Cook logs saved for {} recipe(s).", records.len());
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Flatten a scheduled meal into a synthetic single recipe + schedule that the
+/// existing TUI cook mode can drive, preserving recipe and resource provenance
+/// in step sections and timeline labels.
+///
+/// Returns the synthetic recipe, its matching schedule, and a map from each
+/// synthetic step index back to its source recipe index.
+fn flatten_meal(
+    recipes: &[fond_domain::Recipe],
+    sched: &fond_timeline::ScheduledMeal,
+) -> (
+    fond_domain::Recipe,
+    fond_timeline::ScheduledTimeline,
+    Vec<usize>,
+) {
+    use fond_timeline::{ScheduledNode, ScheduledTimeline};
+
+    let title = format!(
+        "Meal: {}",
+        sched
+            .sources
+            .iter()
+            .map(|s| s.title.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let mut steps = Vec::with_capacity(sched.nodes.len());
+    let mut nodes = Vec::with_capacity(sched.nodes.len());
+    let mut index_to_recipe = Vec::with_capacity(sched.nodes.len());
+
+    for (i, mn) in sched.nodes.iter().enumerate() {
+        let ri = mn.recipe_index;
+        index_to_recipe.push(ri);
+
+        // Recover the original step body and timers by matching step order.
+        let orig = recipes
+            .get(ri)
+            .and_then(|r| r.steps.iter().find(|s| s.order == mn.node.step_index));
+        let body = orig
+            .map(|s| s.body.clone())
+            .unwrap_or_else(|| mn.node.label.clone());
+        let timers = orig.map(|s| s.timers.clone()).unwrap_or_default();
+
+        steps.push(fond_domain::Step {
+            section: Some(mn.recipe_title.clone()),
+            body,
+            timers,
+            order: i as u32,
+        });
+
+        // Timeline label carries recipe + resource so the rail shows provenance.
+        let resource = mn.node.resource.summary();
+        let label = if resource == "—" {
+            format!("{} · {}", mn.recipe_title, mn.node.label)
+        } else {
+            format!("{} · {} [{}]", mn.recipe_title, mn.node.label, resource)
+        };
+
+        let mut node = mn.node.clone();
+        node.id = fond_timeline::NodeId(i);
+        node.step_index = i as u32;
+        node.label = label;
+        node.depends_on = vec![];
+
+        nodes.push(ScheduledNode {
+            node,
+            scheduled_start: mn.scheduled_start,
+            scheduled_end: mn.scheduled_end,
+        });
+    }
+
+    let recipe = fond_domain::Recipe {
+        slug: "meal".into(),
+        title: title.clone(),
+        source: None,
+        source_url: None,
+        description: None,
+        recipe_yield: None,
+        prep_time: None,
+        cook_time: None,
+        total_time: None,
+        servings: None,
+        ingredients: vec![],
+        steps,
+        cookware: vec![],
+        tags: vec![],
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        raw_source: None,
+    };
+
+    let schedule = ScheduledTimeline {
+        recipe_title: title,
+        recipe_slug: "meal".into(),
+        serve_at: sched.serve_at,
+        start_at: sched.start_at,
+        total_active_seconds: sched.total_active_seconds,
+        total_passive_seconds: sched.total_passive_seconds,
+        nodes,
+        has_untimed_steps: sched.has_untimed_steps,
+    };
+
+    (recipe, schedule, index_to_recipe)
 }
 
 fn print_timeline(sched: &fond_timeline::ScheduledTimeline) {
@@ -2584,6 +2875,73 @@ fn print_timeline(sched: &fond_timeline::ScheduledTimeline) {
         active_str, passive_str, total_str
     );
 
+    if sched.has_untimed_steps {
+        println!("  Note: Some steps have unknown duration (shown as —).");
+    }
+    println!();
+}
+
+/// Print a coordinated multi-recipe meal timeline.
+fn print_meal_timeline(sched: &fond_timeline::ScheduledMeal) {
+    use fond_timeline::duration::format_duration;
+
+    let titles: Vec<&str> = sched.sources.iter().map(|s| s.title.as_str()).collect();
+
+    println!();
+    println!("  Coordinated Meal: {}", titles.join(", "));
+    println!(
+        "  Serve at {} — Start at {}",
+        sched.serve_at.format("%H:%M"),
+        sched.start_at.format("%H:%M"),
+    );
+    println!(
+        "  Kitchen: {} oven(s), {} burner(s), {} cook(s)",
+        sched.resources.ovens, sched.resources.burners, sched.resources.cooks,
+    );
+    println!();
+
+    let mut table = Table::new();
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(vec!["Start", "Duration", "Recipe", "Resource", "Step"]);
+
+    for sn in &sched.nodes {
+        let start = sn.scheduled_start.format("%H:%M").to_string();
+        let dur = match &sn.node.duration {
+            Some(d) => format_duration(d.seconds),
+            None => "—".to_string(),
+        };
+        let recipe = sn.recipe_title.clone();
+        let resource = sn.node.resource.summary();
+        let label = sn.node.label.clone();
+        table.add_row(vec![start, dur, recipe, resource, label]);
+    }
+
+    println!("{table}");
+    println!();
+
+    // Conflicts — reported honestly rather than hidden.
+    if sched.conflicts.is_empty() {
+        println!("  No resource conflicts — everything fits.");
+    } else {
+        println!(
+            "  ⚠ {} resource conflict(s) coordinated around:",
+            sched.conflicts.len()
+        );
+        for c in &sched.conflicts {
+            println!("    • [{}] {}", c.kind.label(), c.detail);
+        }
+    }
+    println!();
+
+    // Summary.
+    let active_str = format_duration(sched.total_active_seconds);
+    let passive_str = format_duration(sched.total_passive_seconds);
+    let total = sched.total_active_seconds + sched.total_passive_seconds;
+    let total_str = format_duration(total);
+    println!(
+        "  Active: {} | Passive: {} | Timed total: {}",
+        active_str, passive_str, total_str
+    );
     if sched.has_untimed_steps {
         println!("  Note: Some steps have unknown duration (shown as —).");
     }

@@ -2,6 +2,8 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::resource::ResourceRequirement;
+
 /// Unique identifier for a timeline node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub usize);
@@ -93,6 +95,11 @@ pub struct TimelineNode {
     pub task_type: TaskType,
     /// Known duration, if any. `None` means untimed.
     pub duration: Option<StepDuration>,
+    /// Kitchen resource this step requires while running (oven/stove/cook).
+    /// Additive: defaults to "no requirement" for timelines deserialized from
+    /// older data that predates resource modeling.
+    #[serde(default = "ResourceRequirement::none")]
+    pub resource: ResourceRequirement,
     /// Nodes that must complete before this one can start.
     pub depends_on: Vec<NodeId>,
 }
