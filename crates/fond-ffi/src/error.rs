@@ -35,6 +35,16 @@ pub enum FondError {
     /// timestamp, etc).
     #[error("invalid argument: {message}")]
     InvalidArgument { message: String },
+
+    /// The recipe changed on disk since it was loaded (optimistic-concurrency
+    /// guard). The caller should reload and retry.
+    #[error("conflict: {message}")]
+    Conflict { message: String },
+
+    /// A recipe already exists at the target slug/file (e.g. a rename would
+    /// clobber another recipe).
+    #[error("a recipe already exists with slug: {slug}")]
+    AlreadyExists { slug: String },
 }
 
 impl From<StoreError> for FondError {

@@ -7,7 +7,9 @@
 use chrono::SecondsFormat;
 use fond_core::ingredient_class::ScalingCategory;
 use fond_core::scale::{ScaledIngredient, ScaledRecipe, ScalingWarning};
-use fond_domain::{Cookware, Recipe, RecipeFilter, RecipeIngredient, Step, Timer};
+use fond_domain::{
+    Block, BlockKind, Cookware, Recipe, RecipeFilter, RecipeIngredient, SectionedBlock, Step, Timer,
+};
 use fond_store::{RecipeSummary, SearchResult, TagCount};
 use fond_timeline::{
     DurationSource, ScheduledNode, ScheduledTimeline, StepDuration, TaskType, Timeline,
@@ -250,6 +252,137 @@ impl From<Recipe> for RecipeDto {
             updated_at: r.updated_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         }
     }
+}
+
+// ── Editing / write-back ──────────────────────────────────────────
+
+/// The kind of an editable recipe body block, inferred from its markup.
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum CookBlockKindDto {
+    /// A cooking step / instruction (may contain inline Cooklang markup).
+    Step,
+    /// A section header (`= Name`).
+    Section,
+    /// A block quote / tip (`> ...`).
+    Note,
+    /// A line comment (`-- ...`).
+    Comment,
+    /// A block comment (`[- ... -]`).
+    BlockComment,
+}
+
+impl From<BlockKind> for CookBlockKindDto {
+    fn from(k: BlockKind) -> Self {
+        match k {
+            BlockKind::Step => CookBlockKindDto::Step,
+            BlockKind::Section => CookBlockKindDto::Section,
+            BlockKind::Note => CookBlockKindDto::Note,
+            BlockKind::Comment => CookBlockKindDto::Comment,
+            BlockKind::BlockComment => CookBlockKindDto::BlockComment,
+        }
+    }
+}
+
+/// An editable body block: raw Cooklang text plus its resolved section.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct CookBlockDto {
+    pub kind: CookBlockKindDto,
+    /// The raw block text, verbatim (inline `@ingredient{}` markup preserved).
+    pub text: String,
+    /// The section this block belongs to, if any.
+    pub section: Option<String>,
+}
+
+impl From<SectionedBlock> for CookBlockDto {
+    fn from(b: SectionedBlock) -> Self {
+        Self {
+            kind: b.kind.into(),
+            text: b.text,
+            section: b.section,
+        }
+    }
+}
+
+impl From<&CookBlockDto> for Block {
+    fn from(b: &CookBlockDto) -> Self {
+        // Re-classify from the text so the kind always matches the content.
+        Block::new(b.text.clone())
+    }
+}
+
+/// A recipe prepared for editing: editable metadata + raw body blocks.
+///
+/// Unlike [`RecipeDto`] (a read model with stripped step text), this exposes
+/// the *raw* Cooklang so edits round-trip losslessly. `content_hash` is the
+/// optimistic-concurrency token to pass back when saving.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RecipeEditorDto {
+    pub slug: String,
+    pub content_hash: String,
+    pub raw_source: String,
+    pub title: String,
+    pub servings: Option<String>,
+    pub description: Option<String>,
+    pub source: Option<String>,
+    pub source_url: Option<String>,
+    pub prep_time: Option<String>,
+    pub cook_time: Option<String>,
+    pub total_time: Option<String>,
+    /// The `image:` frontmatter value (content-addressed relative path).
+    pub image: Option<String>,
+    pub tags: Vec<String>,
+    /// Ordered body blocks (steps, sections, quotes, comments).
+    pub blocks: Vec<CookBlockDto>,
+    /// Parsed ingredient list, derived from the steps for read-only display.
+    pub ingredients: Vec<IngredientDto>,
+}
+
+/// Fields for creating a brand-new recipe.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NewRecipeDto {
+    pub title: String,
+    #[uniffi(default = None)]
+    pub servings: Option<String>,
+    #[uniffi(default = [])]
+    pub tags: Vec<String>,
+    #[uniffi(default = None)]
+    pub description: Option<String>,
+    #[uniffi(default = None)]
+    pub source: Option<String>,
+    /// Raw Cooklang step texts (inline `@ingredient{}` markup and all).
+    #[uniffi(default = [])]
+    pub steps: Vec<String>,
+}
+
+/// Fields for saving edits to an existing recipe.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SaveRecipeDto {
+    /// The current slug identifying the recipe to update.
+    pub slug: String,
+    /// The `content_hash` from the loaded editor state (optimistic guard).
+    pub base_content_hash: String,
+    pub title: String,
+    #[uniffi(default = None)]
+    pub servings: Option<String>,
+    #[uniffi(default = None)]
+    pub description: Option<String>,
+    #[uniffi(default = None)]
+    pub source: Option<String>,
+    #[uniffi(default = None)]
+    pub source_url: Option<String>,
+    #[uniffi(default = None)]
+    pub prep_time: Option<String>,
+    #[uniffi(default = None)]
+    pub cook_time: Option<String>,
+    #[uniffi(default = None)]
+    pub total_time: Option<String>,
+    #[uniffi(default = None)]
+    pub image: Option<String>,
+    #[uniffi(default = [])]
+    pub tags: Vec<String>,
+    /// The full, ordered body blocks to write back.
+    #[uniffi(default = [])]
+    pub blocks: Vec<CookBlockDto>,
 }
 
 // ── Scaling ───────────────────────────────────────────────────────

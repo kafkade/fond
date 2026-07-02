@@ -1,7 +1,7 @@
 # fond-ffi
 
-UniFFI binding layer that exposes fond's **read + cook-mode** functionality to
-Swift (and, in principle, other UniFFI-supported languages).
+UniFFI binding layer that exposes fond's **read, cook-mode, and editing**
+functionality to Swift (and, in principle, other UniFFI-supported languages).
 
 It is a thin boundary over the pure-Rust core:
 
@@ -34,4 +34,19 @@ See [`apple/build-xcframework.sh`](../../apple/build-xcframework.sh), which:
 
 ## Scope
 
-Read + cook mode only. Editing / write-back is deferred.
+Read, cook mode, and **editing**. Alongside the read/cook methods, `FondClient`
+exposes a write surface that persists changes back to the canonical `.cook`
+files with a lossless Cooklang round-trip and keeps the derived SQLite index in
+sync:
+
+- `get_recipe_for_edit` / `preview_ingredients` — load raw, editable body blocks
+  (inline Cooklang preserved) and parse a live ingredient preview.
+- `create_recipe` / `save_recipe` / `save_recipe_source` — create or update a
+  recipe from structured fields or raw source; handles title→slug file renames.
+- `attach_photo` — store an image content-addressed under `photos/` (ADR-002)
+  and link it via an `image:` frontmatter key.
+- `delete_recipe` — remove the `.cook` file and its index row.
+
+Saves carry the loaded `content_hash` as a lightweight optimistic-concurrency
+guard, returning `FondError::Conflict` if the file changed on disk since load.
+Multi-device sync remains out of scope (Phase 7).

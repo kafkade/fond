@@ -5,12 +5,14 @@ import FondKit
 /// cook mode.
 struct RecipeDetailView: View {
     let slug: String
+    @Binding var selectedSlug: String?
     @EnvironmentObject private var model: AppModel
 
     @State private var recipe: RecipeDto?
     @State private var scaled: ScaledRecipeDto?
     @State private var multiplier: Double = 1.0
     @State private var error: String?
+    @State private var showingEdit = false
 
     private let multipliers: [Double] = [0.5, 1.0, 2.0, 3.0]
 
@@ -25,6 +27,29 @@ struct RecipeDetailView: View {
             }
         }
         .navigationTitle(recipe?.title ?? "Recipe")
+        .toolbar {
+            if recipe != nil {
+                ToolbarItem {
+                    Button { showingEdit = true } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            RecipeEditView(
+                mode: .edit(slug: slug),
+                onSaved: { newSlug in
+                    if newSlug == slug {
+                        load()
+                    } else {
+                        selectedSlug = newSlug
+                    }
+                },
+                onDeleted: { selectedSlug = nil }
+            )
+            .environmentObject(model)
+        }
         .task(id: slug) { load() }
     }
 
