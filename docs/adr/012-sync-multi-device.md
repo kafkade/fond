@@ -114,3 +114,14 @@ ADR-005's forward-looking lifecycle.
   their own ADR once the data model is stable.
 - **No lock-in**: every tier keeps `.cook` files (and, for Tier 2, plain-text
   sidecars) as user-owned, portable artifacts.
+
+## Update (Tier 2 built)
+
+The Tier 2 sidecar codec is now implemented — see
+[ADR-015](015-overlay-sidecar-codec.md), which records the concrete JSONL layout,
+the last-writer-wins / union merge semantics, conflict reporting, and the
+decision to keep `cr-sqlite` as a *documented, unused fallback* (last-writer-wins
+has proven sufficient; no concurrent-edit pain has appeared). The identity-gap
+precondition was closed first (issue #80, migration V010). With Tier 2 shipped,
+Decision Log **D18**'s overlay half moves from `[Validation Required]` to
+`[Validated]`.

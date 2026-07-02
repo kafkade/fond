@@ -385,6 +385,45 @@ enum Commands {
         #[arg(long, default_value = "127.0.0.1", env = "FOND_BIND")]
         bind: String,
     },
+
+    /// Export or import your authored overlay (notes, ratings, cook logs,
+    /// pantry, meal plans, dietary profiles) as diffable sidecar files.
+    ///
+    /// Sidecars are plain-text JSONL that ride the same file-sync channel as
+    /// your recipes (ADR-012 Tier 2). Import merges with last-writer-wins for
+    /// point data and union for append-only logs, reporting every conflict.
+    Overlay {
+        #[command(subcommand)]
+        action: OverlayAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum OverlayAction {
+    /// Export authored overlays to sidecar files.
+    Export {
+        /// Directory to write sidecars to (default: <data-dir>/overlay)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+
+        /// Export only this user's per-user overlays (by name)
+        #[arg(long)]
+        user: Option<String>,
+    },
+
+    /// Import authored overlays from sidecar files, merging with conflict reporting.
+    Import {
+        /// Directory to read sidecars from (default: <data-dir>/overlay)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+
+    /// Show where sidecars live and a summary of local overlay data.
+    Status {
+        /// Sidecar directory to inspect (default: <data-dir>/overlay)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -783,6 +822,11 @@ fn main() -> Result<()> {
             recipe,
         } => cmd_substitute(&paths, &ingredient, context, recipe.as_deref(), &fmt),
         Commands::Serve { port, bind } => cmd_serve(&paths, port, &bind),
+        Commands::Overlay { action } => match action {
+            OverlayAction::Export { dir, user } => cmd_overlay_export(&paths, dir, user, &fmt),
+            OverlayAction::Import { dir } => cmd_overlay_import(&paths, dir, &fmt),
+            OverlayAction::Status { dir } => cmd_overlay_status(&paths, dir, &fmt),
+        },
     }
 }
 // ═══════════════════════════════════════════════════════════════════
@@ -794,6 +838,10 @@ fn open_db(paths: &FondPaths) -> Result<FondDb> {
 
 fn recipes_dir(paths: &FondPaths) -> PathBuf {
     paths.data_dir.join("recipes")
+}
+
+fn overlay_dir(paths: &FondPaths) -> PathBuf {
+    paths.data_dir.join("overlay")
 }
 
 fn review_assets_dir(paths: &FondPaths) -> PathBuf {
@@ -4375,9 +4423,23 @@ fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
     let dir = recipes_dir(paths);
     let report = fond_store::reindex(&db, &dir).context("reindex failed")?;
 
+    // Tier 2 sync (ADR-012): after rebuilding the derived index from files,
+    // merge any authored-overlay sidecars that arrived over the file-sync
+    // channel so a synced device converges in a single command.
+    let overlay = overlay_dir(paths);
+    let merge = if overlay.exists() {
+        Some(fond_store::overlay::import_from_dir(&db, &overlay).context("overlay import failed")?)
+    } else {
+        None
+    };
+
     match fmt {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            let out = serde_json::json!({
+                "reindex": report,
+                "overlay": merge,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
         }
         OutputFormat::Table => {
             println!("Reindexed {} recipe(s)", report.indexed);
@@ -4387,9 +4449,188 @@ fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
                     eprintln!("  {file}: {err}");
                 }
             }
+            if let Some(merge) = &merge {
+                println!(
+                    "Overlay import: {} applied, {} conflict(s)",
+                    merge.applied_total(),
+                    merge.conflict_total()
+                );
+                print_overlay_conflicts(merge);
+            }
         }
     }
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Overlay sync (ADR-012 Tier 2)
+// ═══════════════════════════════════════════════════════════════════
+
+fn cmd_overlay_export(
+    paths: &FondPaths,
+    dir: Option<PathBuf>,
+    user: Option<String>,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let target = dir.unwrap_or_else(|| overlay_dir(paths));
+    let opts = fond_store::overlay::ExportOptions { user };
+
+    let summary =
+        fond_store::overlay::export_to_dir(&db, &target, &opts).context("overlay export failed")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "dir": target.display().to_string(),
+                "summary": summary,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Exported authored overlay to {}", target.display());
+            println!("  notes:       {}", summary.notes);
+            println!("  ratings:     {}", summary.ratings);
+            println!("  cook logs:   {}", summary.cook_logs);
+            println!("  profiles:    {}", summary.profiles);
+            println!("  pantry:      {}", summary.pantry_items);
+            println!("  meal plans:  {}", summary.meal_plans);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_overlay_import(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputFormat) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let db = open_db(paths)?;
+    let target = dir.unwrap_or_else(|| overlay_dir(paths));
+
+    if !target.exists() {
+        anyhow::bail!(
+            "no overlay sidecars found at {} — run `fond overlay export` first, or sync them in",
+            target.display()
+        );
+    }
+
+    let report =
+        fond_store::overlay::import_from_dir(&db, &target).context("overlay import failed")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        OutputFormat::Table => {
+            println!("Imported authored overlay from {}", target.display());
+            println!(
+                "  notes:      {} added, {} already present",
+                report.notes_added, report.notes_skipped
+            );
+            println!(
+                "  ratings:    {} applied, {} skipped (older)",
+                report.ratings_applied, report.ratings_skipped
+            );
+            println!(
+                "  cook logs:  {} added, {} already present",
+                report.cook_logs_added, report.cook_logs_skipped
+            );
+            println!(
+                "  pantry:     {} applied, {} skipped (older)",
+                report.pantry_applied, report.pantry_skipped
+            );
+            println!(
+                "  meal plans: {} applied, {} skipped (older)",
+                report.meal_plans_applied, report.meal_plans_skipped
+            );
+            println!(
+                "  profile:    {} allergen(s), {} preference(s) added",
+                report.profile_allergens_added, report.profile_prefs_added
+            );
+            if report.users_created > 0 {
+                println!("  users:      {} created", report.users_created);
+            }
+            if report.malformed_lines > 0 {
+                eprintln!(
+                    "  warning: {} malformed line(s) skipped",
+                    report.malformed_lines
+                );
+            }
+            print_overlay_conflicts(&report);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_overlay_status(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputFormat) -> Result<()> {
+    let db = open_db(paths)?;
+    let target = dir.unwrap_or_else(|| overlay_dir(paths));
+    // Reuse the export collectors in a dry run by exporting to a summary only:
+    // count local rows without writing files.
+    let summary = fond_store::overlay::local_summary(&db).context("overlay status failed")?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "dir": target.display().to_string(),
+                "exists": target.exists(),
+                "local": summary,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Overlay sidecar directory: {}", target.display());
+            println!(
+                "  {}",
+                if target.exists() {
+                    "(present)"
+                } else {
+                    "(not created yet — run `fond overlay export`)"
+                }
+            );
+            println!("Local authored overlay:");
+            println!("  notes:       {}", summary.notes);
+            println!("  ratings:     {}", summary.ratings);
+            println!("  cook logs:   {}", summary.cook_logs);
+            println!("  profiles:    {}", summary.profiles);
+            println!("  pantry:      {}", summary.pantry_items);
+            println!("  meal plans:  {}", summary.meal_plans);
+        }
+    }
+    Ok(())
+}
+
+/// Print any last-writer-wins conflicts from an overlay merge report so the
+/// user always sees which side won — never a silent overwrite.
+fn print_overlay_conflicts(report: &fond_store::overlay::MergeReport) {
+    if report.conflict_total() == 0 {
+        return;
+    }
+    eprintln!("\nConflicts (last-writer-wins resolved):");
+    for c in &report.rating_conflicts {
+        let who = c.user.as_deref().unwrap_or("(unassigned)");
+        eprintln!(
+            "  rating {} [{}]: local {} vs incoming {} → kept {:?}",
+            c.recipe_slug, who, c.local_score, c.incoming_score, c.winner
+        );
+    }
+    for c in &report.pantry_conflicts {
+        eprintln!(
+            "  pantry '{}': local present={} vs incoming present={} → kept {:?}",
+            c.name, c.local_present, c.incoming_present, c.winner
+        );
+    }
+    for c in &report.meal_plan_conflicts {
+        eprintln!(
+            "  meal plan '{}': entry sets differ → kept {:?}",
+            c.name, c.winner
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

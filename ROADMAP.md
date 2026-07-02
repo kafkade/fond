@@ -1100,7 +1100,7 @@ A consolidated record of every load-bearing decision. One row, one decision, one
 | D15 | Photo storage | Content-addressed filesystem alongside files | Cooklang convention, ownership | `[Validated]` |
 | D16 | License | MIT | Adoption + portfolio consistency (§11) | `[Validated]` |
 | D17 | Web stack (Ph4) | Axum + HTMX over `fond-core` | Light, server-rendered, same core | `[Validated]` |
-| D18 | Sync (Ph7) | File-sync first; cr-sqlite only if overlays need it ([ADR-012](docs/adr/012-sync-multi-device.md)) | Defer CRDT complexity; leverage owned files | File-sync `[Validated]`; overlay/CRDT `[Validation Required]` |
+| D18 | Sync (Ph7) | File-sync first; cr-sqlite only if overlays need it ([ADR-012](docs/adr/012-sync-multi-device.md)) | Defer CRDT complexity; leverage owned files | File-sync `[Validated]`; overlay sidecar sync `[Validated]` ([ADR-015](docs/adr/015-overlay-sidecar-codec.md)); cr-sqlite fallback `[Deferred]` |
 | D19 | Native bridge (Ph5) | UniFFI → SwiftUI | Reuse core on Apple platforms | `[Validated]` |
 | D20 | Distribution/docs | cargo-dist + mdBook + GitHub Actions | Cross-platform binaries, free OSS CI | `[Validated]` |
 
