@@ -12,6 +12,7 @@ mod import_review;
 mod meal_plan;
 mod note;
 mod nutrition;
+pub mod overlay;
 mod pantry;
 mod paths;
 mod rating;
