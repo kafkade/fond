@@ -2924,3 +2924,219 @@ fn doctor_json_output() {
     assert_eq!(json["ok"], false);
     assert_eq!(json["signals"][0]["tool"], "Syncthing");
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// share (community bundles — ADR-017)
+// ═══════════════════════════════════════════════════════════════════
+
+const SHARE_COOK: &str = "\
+---
+title: Shared Adobo
+source url: https://example.com/adobo
+servings: 4
+---
+
+Brown the @chicken{1%kg} in @soy sauce{60%ml}.
+";
+
+/// Export a bundle from a temp library and return its path.
+fn export_bundle(tmp: &TempDir, out: &std::path::Path) {
+    fond(tmp).arg("init").assert().success();
+    write_fixture(tmp, "shared-adobo.cook", SHARE_COOK);
+    fond(tmp).arg("reindex").assert().success();
+    fond(tmp)
+        .args(["share", "export", "--recipe", "shared-adobo"])
+        .args(["--license", "CC-BY-4.0", "--author", "alice"])
+        .arg("-o")
+        .arg(out)
+        .assert()
+        .success();
+}
+
+#[test]
+fn share_export_requires_target() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    fond(&tmp)
+        .args(["share", "export"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--recipe").or(predicate::str::contains("--all")));
+}
+
+#[test]
+fn share_export_stamps_provenance_losslessly() {
+    let tmp = TempDir::new().unwrap();
+    let bundle = tmp.path().join("adobo.fondshare");
+    export_bundle(&tmp, &bundle);
+    assert!(bundle.exists());
+
+    // Read the .cook back out of the zip and confirm provenance + fidelity.
+    let file = fs::File::open(&bundle).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut cook = String::new();
+    {
+        use std::io::Read;
+        archive
+            .by_name("recipes/shared-adobo.cook")
+            .unwrap()
+            .read_to_string(&mut cook)
+            .unwrap();
+    }
+    assert!(cook.contains("license: CC-BY-4.0"));
+    assert!(cook.contains("shared by: alice"));
+    assert!(cook.contains("source url: https://example.com/adobo"));
+    // Original content untouched.
+    assert!(cook.contains("@chicken{1%kg}"));
+    assert!(cook.contains("servings: 4"));
+}
+
+#[test]
+fn share_inspect_shows_attribution() {
+    let tmp = TempDir::new().unwrap();
+    let bundle = tmp.path().join("adobo.fondshare");
+    export_bundle(&tmp, &bundle);
+
+    fond(&tmp)
+        .args(["share", "inspect"])
+        .arg(&bundle)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Shared Adobo"))
+        .stdout(predicate::str::contains("CC-BY-4.0"));
+}
+
+#[test]
+fn share_import_queues_for_review_with_attribution() {
+    let src = TempDir::new().unwrap();
+    let bundle = src.path().join("adobo.fondshare");
+    export_bundle(&src, &bundle);
+
+    // Import into a fresh, separate library.
+    let dst = TempDir::new().unwrap();
+    fond(&dst).arg("init").assert().success();
+    fond(&dst)
+        .args(["share", "import"])
+        .arg(&bundle)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Queued"));
+
+    // The recipe is NOT written directly — it waits in the review queue.
+    fond(&dst).args(["view", "shared-adobo"]).assert().failure();
+
+    // Accept it through the normal review pipeline.
+    let output = fond(&dst)
+        .args(["--json", "review", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let id = json[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(json[0]["source_type"], "shared-bundle");
+
+    fond(&dst)
+        .args(["review", "accept", &id])
+        .assert()
+        .success();
+
+    // Now it exists, with attribution preserved in the file.
+    fond(&dst).args(["view", "shared-adobo"]).assert().success();
+    let cook = fs::read_to_string(dst.path().join("recipes").join("shared-adobo.cook")).unwrap();
+    assert!(cook.contains("source url: https://example.com/adobo"));
+    assert!(cook.contains("license: CC-BY-4.0"));
+}
+
+#[test]
+fn share_import_is_idempotent() {
+    let src = TempDir::new().unwrap();
+    let bundle = src.path().join("adobo.fondshare");
+    export_bundle(&src, &bundle);
+
+    let dst = TempDir::new().unwrap();
+    fond(&dst).arg("init").assert().success();
+    fond(&dst)
+        .args(["share", "import"])
+        .arg(&bundle)
+        .assert()
+        .success();
+
+    // Second import finds it already queued and skips it.
+    fond(&dst)
+        .args(["share", "import"])
+        .arg(&bundle)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Skipped"));
+}
+
+#[test]
+fn share_import_dry_run_writes_nothing() {
+    let src = TempDir::new().unwrap();
+    let bundle = src.path().join("adobo.fondshare");
+    export_bundle(&src, &bundle);
+
+    let dst = TempDir::new().unwrap();
+    fond(&dst).arg("init").assert().success();
+    fond(&dst)
+        .args(["share", "import", "--dry-run"])
+        .arg(&bundle)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[dry-run]"));
+
+    // Nothing landed in the review queue.
+    fond(&dst)
+        .args(["review", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No queued review drafts"));
+}
+
+#[test]
+fn share_publish_requires_consent_and_writes_index() {
+    let tmp = TempDir::new().unwrap();
+    let bundle = tmp.path().join("adobo.fondshare");
+    export_bundle(&tmp, &bundle);
+
+    let outbox = tmp.path().join("index");
+
+    // Without --yes and no interactive stdin, publish aborts and writes nothing.
+    fond(&tmp)
+        .args(["share", "publish"])
+        .arg(&bundle)
+        .args(["--to"])
+        .arg(&outbox)
+        .write_stdin("")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Aborted"));
+    assert!(!outbox.join("adobo.fondshare").exists());
+
+    // With explicit consent it copies into the static index.
+    fond(&tmp)
+        .args(["share", "publish"])
+        .arg(&bundle)
+        .args(["--to"])
+        .arg(&outbox)
+        .arg("--yes")
+        .assert()
+        .success();
+    assert!(outbox.join("adobo.fondshare").exists());
+}
+
+#[test]
+fn share_import_rejects_non_bundle() {
+    let tmp = TempDir::new().unwrap();
+    fond(&tmp).arg("init").assert().success();
+    let bogus = tmp.path().join("not-a-bundle.fondshare");
+    fs::write(&bogus, b"not a zip").unwrap();
+    fond(&tmp)
+        .args(["share", "import"])
+        .arg(&bogus)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a valid .fondshare bundle"));
+}

@@ -827,6 +827,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 
 - Multi-recipe meal-time coordination (oven/stove contention solver); community recipe sharing (opt-in, ownership-preserving); voice cook mode.
   - **Multi-recipe coordination — delivered** ([ADR-016](docs/adr/016-multi-recipe-coordination.md)): `fond cook a b c --serve-at 19:00` merges N single-recipe DAGs onto one shared eat-time and resolves finite oven/burner/cook contention with a resource-aware backward list-scheduling heuristic (`--ovens/--burners/--cooks`), reporting unavoidable conflicts honestly rather than fabricating a feasible schedule. Drives the TUI cook mode via a flattened merged plan. Heuristic (not optimal); timing accuracy `[Validation Required]`.
+  - **Community recipe sharing — delivered** ([ADR-017](docs/adr/017-community-sharing.md)): `fond share export/inspect/import/publish` moves recipes as portable, self-contained `.fondshare` bundles (verbatim `.cook` + attribution/license manifest, with provenance also stamped losslessly into the frontmatter). Import flows through the ADR-010 review queue and is idempotent; publish targets a git-friendly static index with **no central server** and **explicit per-action consent** — fond performs no network upload. Upholds principles #1 (local-first) and #2 (data ownership).
 
 ### 13.1 Roadmap at a glance
 
@@ -842,7 +843,7 @@ Each phase ships 3–5 vertical-slice deliverables. Scope is cut, not timelines.
 | 7 | Sync | Research | Multi-device |
 | 8 | Moonshots | Research | Coordination / community |
 
-Phase 8 progress: multi-recipe meal coordination (oven/stove contention solver) is delivered — see [ADR-016](docs/adr/016-multi-recipe-coordination.md).
+Phase 8 progress: multi-recipe meal coordination (oven/stove contention solver) is delivered — see [ADR-016](docs/adr/016-multi-recipe-coordination.md). Community recipe sharing (opt-in, ownership-preserving) is delivered — see [ADR-017](docs/adr/017-community-sharing.md).
 
 ---
 

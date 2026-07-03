@@ -14,6 +14,7 @@ pub mod ocr;
 pub mod paprika;
 mod pipeline;
 pub mod schema_org;
+pub mod share;
 
 pub use error::*;
 pub use pipeline::*;
