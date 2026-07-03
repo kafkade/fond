@@ -1,0 +1,15 @@
+[package]
+name = "fond-voice"
+description = "Hands-free voice cook mode for fond: command grammar, cook-state brain, and local-first speech adapters"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fond-domain.workspace = true
+fond-timeline.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true

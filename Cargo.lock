@@ -1162,6 +1162,7 @@ dependencies = [
  "fond-scrape",
  "fond-store",
  "fond-timeline",
+ "fond-voice",
  "fond-web",
  "predicates",
  "ratatui",
@@ -1270,6 +1271,15 @@ dependencies = [
  "regex",
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "fond-voice"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "fond-domain",
+ "fond-timeline",
 ]
 
 [[package]]
