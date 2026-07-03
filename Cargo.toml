@@ -8,6 +8,7 @@ members = [
     "crates/fond-scrape",
     "crates/fond-store",
     "crates/fond-timeline",
+    "crates/fond-voice",
     "crates/fond-web",
     "crates/fond-ffi",
 ]
@@ -26,6 +27,7 @@ fond-import = { path = "crates/fond-import", version = "1.0.0" }
 fond-store = { path = "crates/fond-store", version = "1.0.0" }
 fond-scrape = { path = "crates/fond-scrape", version = "1.0.0" }
 fond-timeline = { path = "crates/fond-timeline", version = "1.0.0" }
+fond-voice = { path = "crates/fond-voice", version = "1.0.0" }
 fond-web = { path = "crates/fond-web", version = "1.0.0" }
 thiserror = "2"
 uuid = { version = "1", features = ["v7", "serde"] }

@@ -15,6 +15,7 @@ fond import url https://example.com/recipe    # Import from any recipe site
 fond search "braised pork"                    # Instant full-text search
 fond view chicken-adobo                       # Render a recipe
 fond cook chicken-adobo --serve-at 19:00      # Backward-scheduled cook mode
+fond cook chicken-adobo --voice               # Hands-free voice cook mode (local-first)
 fond pantry check chicken-adobo               # What do you have? 85% coverage
 fond suggest                                  # What can I cook now? Ranked by coverage
 fond grocery from-recipe chicken-adobo        # Pantry-aware shopping list

@@ -19,6 +19,7 @@ use serde::Serialize;
 
 mod ocr;
 mod tui;
+mod voice_cook;
 
 /// fond — a private, local-first personal cooking & recipe manager.
 #[derive(Parser)]
@@ -312,6 +313,29 @@ enum Commands {
         /// Number of cooks — simultaneous hands-on tasks (default 1)
         #[arg(long)]
         cooks: Option<u32>,
+
+        /// Enter hands-free voice cook mode: steps are read aloud and driven by
+        /// spoken (or typed) commands. On-device speech by default; fully
+        /// offline. Single recipe only.
+        #[arg(long)]
+        voice: bool,
+
+        /// With --voice, disable text-to-speech (text-only; still voice-driven).
+        #[arg(long)]
+        no_speak: bool,
+
+        /// With --voice, use a custom on-device/external text-to-speech command
+        /// (e.g. "say -v Alex"). The spoken text is appended as the final arg.
+        /// Clearly your choice — fond ships no cloud speech.
+        #[arg(long, value_name = "CMD")]
+        tts_cmd: Option<String>,
+
+        /// With --voice, read recognized phrases from an external recognizer
+        /// command's stdout (one phrase per line), e.g. a local whisper.cpp or
+        /// Vosk pipeline. The integration point for on-device (or, at your
+        /// discretion, cloud) speech-to-text.
+        #[arg(long, value_name = "CMD")]
+        listen_cmd: Option<String>,
     },
 
     /// Scale a recipe's quantities by a multiplier or target servings.
@@ -908,6 +932,10 @@ fn main() -> Result<()> {
             ovens,
             burners,
             cooks,
+            voice,
+            no_speak,
+            tts_cmd,
+            listen_cmd,
         } => cmd_cook(
             &paths,
             &slugs,
@@ -916,6 +944,12 @@ fn main() -> Result<()> {
             ovens,
             burners,
             cooks,
+            VoiceOptions {
+                enabled: voice,
+                no_speak,
+                tts_cmd,
+                listen_cmd,
+            },
             &fmt,
         ),
         Commands::Scale {
@@ -3051,6 +3085,14 @@ fn cmd_share_publish(
 // Cook (timeline)
 // ═══════════════════════════════════════════════════════════════════
 
+/// Options controlling hands-free voice cook mode.
+struct VoiceOptions {
+    enabled: bool,
+    no_speak: bool,
+    tts_cmd: Option<String>,
+    listen_cmd: Option<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_cook(
     paths: &FondPaths,
@@ -3060,6 +3102,7 @@ fn cmd_cook(
     ovens: Option<u32>,
     burners: Option<u32>,
     cooks: Option<u32>,
+    voice: VoiceOptions,
     fmt: &OutputFormat,
 ) -> Result<()> {
     let db = open_db(paths)?;
@@ -3078,8 +3121,13 @@ fn cmd_cook(
 
     if slugs.len() <= 1 {
         let slug = &slugs[0];
-        cmd_cook_single(paths, &db, slug, serve_at_str, plan, fmt)
+        cmd_cook_single(paths, &db, slug, serve_at_str, plan, &voice, fmt)
     } else {
+        if voice.enabled {
+            anyhow::bail!(
+                "voice cook mode supports a single recipe — pass exactly one slug with --voice"
+            );
+        }
         cmd_cook_meal(paths, &db, slugs, serve_at_str, plan, resources, fmt)
     }
 }
@@ -3128,13 +3176,14 @@ fn parse_serve_at(sat: &str) -> Result<chrono::NaiveDateTime> {
     Ok(serve_at)
 }
 
-/// Single-recipe cook planning (unchanged behavior).
+/// Single-recipe cook planning.
 fn cmd_cook_single(
     paths: &FondPaths,
     db: &FondDb,
     slug: &str,
     serve_at_str: Option<&str>,
     plan: bool,
+    voice: &VoiceOptions,
     fmt: &OutputFormat,
 ) -> Result<()> {
     let (record, recipe) = load_recipe_for_cook(paths, db, slug)?;
@@ -3154,6 +3203,20 @@ fn cmd_cook_single(
     } else {
         None
     };
+
+    // Hands-free voice cook mode: its own line-based surface (no alt-screen).
+    if voice.enabled {
+        let mut session = voice_cook::run(recipe, scheduled, voice)?;
+        finish_cook_session(
+            db,
+            &record,
+            session.steps_completed,
+            session.total_steps,
+            session.duration,
+            session.prompt_reader.as_mut(),
+        )?;
+        return Ok(());
+    }
 
     // Decide output mode: --plan or --format json → static; otherwise TUI
     let use_static = plan || matches!(fmt, OutputFormat::Json) || !atty::is(atty::Stream::Stdout);
@@ -3176,42 +3239,70 @@ fn cmd_cook_single(
 
     // TUI mode
     let cook_result = tui::run_cook_mode(recipe, scheduled)?;
+    let mut stdin_lines = read_stdin_line;
+    finish_cook_session(
+        db,
+        &record,
+        cook_result.steps_completed,
+        cook_result.total_steps,
+        cook_result.cook_duration,
+        &mut stdin_lines,
+    )?;
 
-    // Post-TUI: show summary and offer to save cook log
+    Ok(())
+}
+
+/// Read one line from standard input, trimmed. `None` on EOF or error.
+fn read_stdin_line() -> Option<String> {
+    let mut buf = String::new();
+    match io::stdin().lock().read_line(&mut buf) {
+        Ok(0) => None,
+        Ok(_) => Some(buf.trim().to_string()),
+        Err(_) => None,
+    }
+}
+
+/// Print a cook-session summary and offer to persist a cook log.
+///
+/// Shared by both the TUI cook mode and hands-free voice cook mode. Prompt
+/// answers are read via `read_line` so voice mode can route them through its
+/// listener channel (avoiding a second stdin consumer racing the listener).
+fn finish_cook_session(
+    db: &FondDb,
+    record: &fond_store::RecipeRecord,
+    steps_completed: usize,
+    total_steps: usize,
+    duration: std::time::Duration,
+    read_line: &mut dyn FnMut() -> Option<String>,
+) -> Result<()> {
     println!();
-    println!("  Cook session complete: {}", cook_result.recipe_title);
-    let dur_mins = cook_result.cook_duration.as_secs() / 60;
-    let dur_secs = cook_result.cook_duration.as_secs() % 60;
-    println!(
-        "  Steps: {}/{} | Duration: {}:{:02}",
-        cook_result.steps_completed, cook_result.total_steps, dur_mins, dur_secs,
-    );
+    println!("  Cook session complete: {}", record.title);
+    let dur_mins = duration.as_secs() / 60;
+    let dur_secs = duration.as_secs() % 60;
+    println!("  Steps: {steps_completed}/{total_steps} | Duration: {dur_mins}:{dur_secs:02}");
 
     // Save cook log
     print!("  Save to cook log? [Y/n] ");
     io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().lock().read_line(&mut input)?;
+    let input = read_line().unwrap_or_default();
     let save = input.trim().is_empty() || input.trim().eq_ignore_ascii_case("y");
 
     if save {
         // Prompt for an optional note before saving
         print!("  Add a note? (enter text, or press Enter to skip): ");
         io::stdout().flush()?;
-        let mut note_input = String::new();
-        io::stdin().lock().read_line(&mut note_input)?;
-        let note_text = note_input.trim().to_string();
+        let note_text = read_line().unwrap_or_default().trim().to_string();
 
         let user_id = default_user_id(db);
         let now = chrono::Local::now();
-        let started = now - chrono::Duration::seconds(cook_result.cook_duration.as_secs() as i64);
+        let started = now - chrono::Duration::seconds(duration.as_secs() as i64);
         let entry = fond_store::NewCookLog {
             recipe_slug: record.slug.clone(),
             user_id,
             started_at: started.format("%Y-%m-%dT%H:%M:%S").to_string(),
             finished_at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
-            steps_completed: cook_result.steps_completed as i32,
-            total_steps: cook_result.total_steps as i32,
+            steps_completed: steps_completed as i32,
+            total_steps: total_steps as i32,
             notes: note_text,
         };
         let log_repo = fond_store::CookLogRepository::new(db);

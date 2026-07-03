@@ -19,6 +19,7 @@ fond-import.workspace = true
 fond-scrape.workspace = true
 fond-store.workspace = true
 fond-timeline.workspace = true
+fond-voice.workspace = true
 fond-web.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete.workspace = true
