@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Write};
@@ -9,6 +10,7 @@ use clap_complete::Shell;
 use comfy_table::{ContentArrangement, Table};
 use fond_domain::{RecipeFilter, escape_fts5_query};
 use fond_import::paprika;
+use fond_import::share::{self, ManifestRecipe, ShareManifest};
 use fond_store::{
     FondDb, FondPaths, ImportReviewRecord, ImportReviewRepository, NewImportReview,
     RecipeRepository,
@@ -262,6 +264,16 @@ enum Commands {
         /// Output file path (required for Paprika; optional for JSON, defaults to stdout)
         #[arg(long, short)]
         output: Option<PathBuf>,
+    },
+
+    /// Share recipes with others via portable, ownership-preserving bundles.
+    ///
+    /// Bundles are self-contained `.fondshare` files (your `.cook` source plus
+    /// attribution and license). fond never uploads anything — you move the
+    /// bundle over git, a synced folder, or any channel you choose.
+    Share {
+        #[command(subcommand)]
+        action: ShareAction,
     },
 
     /// Generate shell completions.
@@ -686,6 +698,76 @@ enum ReviewAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ShareAction {
+    /// Build a shareable bundle from a recipe (or your whole collection).
+    ///
+    /// Purely local — nothing is uploaded. The bundle carries your `.cook`
+    /// source verbatim plus attribution and license so origin travels with it.
+    Export {
+        /// Export a single recipe by slug (omit with --all for the collection)
+        #[arg(long)]
+        recipe: Option<String>,
+
+        /// Export the entire collection
+        #[arg(long)]
+        all: bool,
+
+        /// Output bundle path (default: <slug>.fondshare or fond-collection.fondshare)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+
+        /// License to assert for the shared recipe(s), e.g. "CC-BY-4.0"
+        #[arg(long)]
+        license: Option<String>,
+
+        /// Attribution/credit recorded as who shared the bundle
+        #[arg(long)]
+        author: Option<String>,
+
+        /// Include linked photos (from each recipe's `image:` frontmatter)
+        #[arg(long)]
+        with_photos: bool,
+    },
+
+    /// Show a bundle's manifest — attribution, license, and provenance — without importing.
+    Inspect {
+        /// Path to the `.fondshare` bundle
+        bundle: PathBuf,
+    },
+
+    /// Import a shared bundle through the review queue, preserving attribution.
+    ///
+    /// Recipes land in `fond review` (never written directly). Re-importing the
+    /// same bundle is idempotent — duplicates are skipped.
+    Import {
+        /// Path to the `.fondshare` bundle
+        bundle: PathBuf,
+
+        /// Preview what would be queued without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Publish a bundle to a git-friendly static index (no central server).
+    ///
+    /// Requires explicit consent: fond prints exactly what would leave your
+    /// device and asks before copying. It performs no network upload itself —
+    /// you sync/push the index however you like.
+    Publish {
+        /// Path to the `.fondshare` bundle to publish
+        bundle: PathBuf,
+
+        /// Destination index directory (default: <data-dir>/shared/outbox)
+        #[arg(long)]
+        to: Option<PathBuf>,
+
+        /// Skip the consent prompt (explicit, scripted consent)
+        #[arg(long, short)]
+        yes: bool,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let paths = FondPaths::resolve(cli.data_dir.clone());
@@ -789,6 +871,32 @@ fn main() -> Result<()> {
             recipe,
             output,
         } => cmd_export(&paths, &export_format, recipe, output),
+        Commands::Share { action } => match action {
+            ShareAction::Export {
+                recipe,
+                all,
+                output,
+                license,
+                author,
+                with_photos,
+            } => cmd_share_export(
+                &paths,
+                recipe,
+                all,
+                output,
+                license.as_deref(),
+                author.as_deref(),
+                with_photos,
+                &fmt,
+            ),
+            ShareAction::Inspect { bundle } => cmd_share_inspect(&bundle, &fmt),
+            ShareAction::Import { bundle, dry_run } => {
+                cmd_share_import(&paths, &bundle, dry_run, &fmt)
+            }
+            ShareAction::Publish { bundle, to, yes } => {
+                cmd_share_publish(&paths, &bundle, to, yes, &fmt)
+            }
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "fond", &mut io::stdout());
             Ok(())
@@ -2441,6 +2549,501 @@ fn cmd_export(
         }
     }
 
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Share (community bundles — ADR-017)
+// ═══════════════════════════════════════════════════════════════════
+
+fn shared_outbox_dir(paths: &FondPaths) -> PathBuf {
+    paths.data_dir.join("shared").join("outbox")
+}
+
+fn default_bundle_name(recipe_slug: &Option<String>) -> String {
+    let ext = share::BUNDLE_EXTENSION;
+    match recipe_slug {
+        Some(slug) => format!("{slug}.{ext}"),
+        None => format!("fond-collection.{ext}"),
+    }
+}
+
+/// Resolve a recipe's linked photo from its `image:`/`photo:` frontmatter, if
+/// the referenced file exists under the data directory. Returns the on-disk
+/// source path and the file's basename.
+fn resolve_recipe_photo(paths: &FondPaths, cook_text: &str) -> Option<(PathBuf, String)> {
+    let doc = fond_domain::CookDocument::parse(cook_text);
+    let rel = doc.get(&["image", "photo"])?;
+    let src = paths.data_dir.join(&rel);
+    if !src.is_file() {
+        return None;
+    }
+    let name = src.file_name()?.to_str()?.to_string();
+    Some((src, name))
+}
+
+/// Open a `.fondshare` bundle, returning its parsed manifest and the archive.
+fn open_bundle(path: &std::path::Path) -> Result<(ShareManifest, zip::ZipArchive<std::fs::File>)> {
+    if !path.exists() {
+        anyhow::bail!("bundle not found: {}", path.display());
+    }
+    let file =
+        std::fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("{} is not a valid .fondshare bundle (zip)", path.display()))?;
+    let manifest_json = read_bundle_string(&mut archive, share::MANIFEST_FILE)?;
+    let manifest: ShareManifest =
+        serde_json::from_str(&manifest_json).context("bundle manifest is not valid JSON")?;
+    Ok((manifest, archive))
+}
+
+fn read_bundle_string(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Result<String> {
+    let mut entry = archive
+        .by_name(name)
+        .with_context(|| format!("bundle is missing {name}"))?;
+    let mut s = String::new();
+    io::Read::read_to_string(&mut entry, &mut s)
+        .with_context(|| format!("failed to read {name} from bundle"))?;
+    Ok(s)
+}
+
+/// Copy a photo blob out of a bundle into the review asset store, returning the
+/// data-dir-relative path recorded on the review draft.
+fn copy_bundle_photo(
+    paths: &FondPaths,
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    name: &str,
+) -> Result<String> {
+    let mut entry = archive
+        .by_name(name)
+        .with_context(|| format!("bundle is missing photo {name}"))?;
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut entry, &mut bytes)
+        .with_context(|| format!("failed to read photo {name} from bundle"))?;
+
+    let hash = bytes_hash(&bytes);
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_else(|| "img".to_string());
+
+    let dir = review_assets_dir(paths);
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let file_name = format!("{hash}.{ext}");
+    let dest = dir.join(&file_name);
+    if !dest.exists() {
+        atomic_write(&dest, &bytes)
+            .with_context(|| format!("failed to write {}", dest.display()))?;
+    }
+    Ok(format!("photos/review/{file_name}"))
+}
+
+struct ShareEntry {
+    cook_file: String,
+    cook_text: String,
+    photos: Vec<(PathBuf, String)>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_share_export(
+    paths: &FondPaths,
+    recipe_slug: Option<String>,
+    all: bool,
+    output: Option<PathBuf>,
+    license: Option<&str>,
+    author: Option<&str>,
+    with_photos: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    if recipe_slug.is_none() && !all {
+        anyhow::bail!(
+            "specify a recipe with `--recipe <slug>`, or `--all` to share your whole collection"
+        );
+    }
+
+    let recipes = if let Some(ref slug) = recipe_slug {
+        vec![collect_single_recipe(paths, slug)?]
+    } else {
+        collect_export_recipes(paths)?
+    };
+    if recipes.is_empty() {
+        anyhow::bail!("no recipes to share");
+    }
+
+    let out_path = output.unwrap_or_else(|| PathBuf::from(default_bundle_name(&recipe_slug)));
+
+    let mut manifest_recipes = Vec::with_capacity(recipes.len());
+    let mut entries = Vec::with_capacity(recipes.len());
+
+    for r in &recipes {
+        // Verbatim source of truth; fall back to emit for DB-only recipes.
+        let raw = r
+            .raw_source
+            .clone()
+            .unwrap_or_else(|| fond_domain::emit_cook(r));
+
+        let prov = share::Provenance::for_recipe(
+            r.source.clone(),
+            r.source_url.clone(),
+            license.map(str::to_string),
+            author.map(str::to_string),
+        );
+        let stamped = share::stamp_provenance(&raw, &prov);
+
+        let cook_file = format!("{}/{}.cook", share::RECIPES_DIR, r.slug);
+
+        let mut photos = Vec::new();
+        if with_photos && let Some((src, name)) = resolve_recipe_photo(paths, &stamped) {
+            photos.push((src, name));
+        }
+        let photo_paths: Vec<String> = photos
+            .iter()
+            .map(|(_, name)| format!("{}/{}", share::PHOTOS_DIR, name))
+            .collect();
+
+        manifest_recipes.push(ManifestRecipe {
+            slug: r.slug.clone(),
+            title: r.title.clone(),
+            cook_file: cook_file.clone(),
+            cook_sha: share::cook_digest(&stamped),
+            source: r.source.clone(),
+            source_url: r.source_url.clone(),
+            license: license.map(str::to_string),
+            attribution: author.map(str::to_string),
+            photos: photo_paths,
+        });
+        entries.push(ShareEntry {
+            cook_file,
+            cook_text: stamped,
+            photos,
+        });
+    }
+
+    let manifest = ShareManifest {
+        schema_version: share::BUNDLE_SCHEMA_VERSION,
+        fond_version: env!("CARGO_PKG_VERSION").to_string(),
+        bundle_id: uuid::Uuid::now_v7().to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        shared_by: author.map(str::to_string),
+        recipes: manifest_recipes,
+    };
+
+    write_bundle(&out_path, &manifest, &entries)
+        .with_context(|| format!("failed to write bundle {}", out_path.display()))?;
+
+    let photo_count: usize = entries.iter().map(|e| e.photos.len()).sum();
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "bundle": out_path.display().to_string(),
+                "bundle_id": manifest.bundle_id,
+                "recipes": manifest.recipes.len(),
+                "photos": photo_count,
+                "manifest": manifest,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            eprintln!(
+                "Wrote bundle {} ({} recipe(s), {} photo(s)).",
+                out_path.display(),
+                manifest.recipes.len(),
+                photo_count
+            );
+            eprintln!("Nothing was uploaded — share this file however you like.");
+        }
+    }
+    Ok(())
+}
+
+fn write_bundle(
+    out_path: &std::path::Path,
+    manifest: &ShareManifest,
+    entries: &[ShareEntry],
+) -> Result<()> {
+    let file = std::fs::File::create(out_path)
+        .with_context(|| format!("failed to create {}", out_path.display()))?;
+    let mut zipw = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    let manifest_json =
+        serde_json::to_vec_pretty(manifest).context("failed to serialize manifest")?;
+    zipw.start_file(share::MANIFEST_FILE, options)?;
+    io::Write::write_all(&mut zipw, &manifest_json)?;
+
+    let mut written_photos: HashSet<String> = HashSet::new();
+    for entry in entries {
+        zipw.start_file(&entry.cook_file, options)?;
+        io::Write::write_all(&mut zipw, entry.cook_text.as_bytes())?;
+
+        for (src, name) in &entry.photos {
+            let bundle_path = format!("{}/{}", share::PHOTOS_DIR, name);
+            if !written_photos.insert(bundle_path.clone()) {
+                continue; // content-addressed name → identical bytes, skip dup entry
+            }
+            let bytes = std::fs::read(src)
+                .with_context(|| format!("failed to read photo {}", src.display()))?;
+            zipw.start_file(&bundle_path, options)?;
+            io::Write::write_all(&mut zipw, &bytes)?;
+        }
+    }
+
+    zipw.finish().context("failed to finalize bundle archive")?;
+    Ok(())
+}
+
+fn cmd_share_inspect(bundle: &std::path::Path, fmt: &OutputFormat) -> Result<()> {
+    let (manifest, _archive) = open_bundle(bundle)?;
+
+    match fmt {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&manifest)?),
+        OutputFormat::Table => {
+            println!("Bundle: {}", bundle.display());
+            println!(
+                "  schema v{}  ·  fond {}  ·  created {}",
+                manifest.schema_version, manifest.fond_version, manifest.created_at
+            );
+            println!("  bundle id: {}", manifest.bundle_id);
+            if let Some(ref by) = manifest.shared_by {
+                println!("  shared by: {by}");
+            }
+            println!("  recipes:   {}", manifest.recipes.len());
+
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["Slug", "Title", "Source", "License", "Photos"]);
+            for r in &manifest.recipes {
+                table.add_row(vec![
+                    r.slug.clone(),
+                    r.title.clone(),
+                    r.source_url
+                        .clone()
+                        .or_else(|| r.source.clone())
+                        .unwrap_or_else(|| "—".to_string()),
+                    r.license.clone().unwrap_or_else(|| "—".to_string()),
+                    r.photos.len().to_string(),
+                ]);
+            }
+            println!("{table}");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_share_import(
+    paths: &FondPaths,
+    bundle: &std::path::Path,
+    dry_run: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    let (manifest, mut archive) = open_bundle(bundle)?;
+    manifest.validate().context("invalid share bundle")?;
+
+    let db = open_db(paths)?;
+    let recipe_repo = RecipeRepository::new(&db);
+    let review_repo = ImportReviewRepository::new(&db);
+
+    // Existing library keys (by source URL) for idempotent re-import.
+    let existing = recipe_repo
+        .list_recipes()
+        .context("failed to list existing recipes")?;
+    let mut library_keys: HashSet<String> = HashSet::new();
+    for summary in &existing {
+        if let Some(rec) = recipe_repo
+            .get_recipe_by_slug(&summary.slug)
+            .context("database query failed")?
+        {
+            let url = rec.source_url.trim().to_lowercase();
+            if !url.is_empty() {
+                library_keys.insert(format!("url:{url}"));
+            }
+        }
+    }
+
+    // Keys already waiting in the review queue.
+    let pending = review_repo
+        .list_pending()
+        .context("failed to list review queue")?;
+    let mut queued_keys: HashSet<String> = HashSet::new();
+    for item in &pending {
+        let url = fond_domain::CookDocument::parse(&item.draft_cook_text)
+            .get(&["source url", "source_url"]);
+        queued_keys.insert(share::dedup_key(url.as_deref(), &item.draft_cook_text));
+    }
+
+    let mut report = fond_import::ImportReport::new();
+
+    for mr in &manifest.recipes {
+        let cook_text = match read_bundle_string(&mut archive, &mr.cook_file) {
+            Ok(t) => t,
+            Err(e) => {
+                report.add(fond_import::ImportResult::Failed {
+                    entry_name: mr.cook_file.clone(),
+                    error: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        match share::plan_recipe(
+            mr.source_url.as_deref(),
+            &cook_text,
+            &library_keys,
+            &queued_keys,
+        ) {
+            share::ImportDecision::Skip(reason) => {
+                report.add(fond_import::ImportResult::Skipped {
+                    title: mr.title.clone(),
+                    reason,
+                });
+            }
+            share::ImportDecision::Enqueue => {
+                if dry_run {
+                    report.add(fond_import::ImportResult::Queued {
+                        title: mr.title.clone(),
+                        review_id: None,
+                        reason: "would queue for review".to_string(),
+                    });
+                    // Prevent double-counting duplicate slugs within one bundle.
+                    queued_keys.insert(share::dedup_key(mr.source_url.as_deref(), &cook_text));
+                    continue;
+                }
+
+                let asset_path = match mr.photos.first() {
+                    Some(photo) => {
+                        copy_bundle_photo(paths, &mut archive, photo).unwrap_or_default()
+                    }
+                    None => String::new(),
+                };
+
+                let source_name = manifest
+                    .shared_by
+                    .clone()
+                    .or_else(|| mr.attribution.clone())
+                    .or_else(|| mr.source.clone())
+                    .unwrap_or_else(|| format!("shared bundle {}", manifest.bundle_id));
+
+                let mut warnings = Vec::new();
+                if let Some(ref l) = mr.license {
+                    warnings.push(format!("shared under license: {l}"));
+                }
+                if let Some(ref a) = mr.attribution {
+                    warnings.push(format!("attribution: {a}"));
+                }
+
+                let created = review_repo
+                    .create(&NewImportReview {
+                        source_type: share::SHARE_SOURCE_TYPE.to_string(),
+                        source_name,
+                        asset_path,
+                        title: mr.title.clone(),
+                        draft_cook_text: cook_text.clone(),
+                        ocr_text: String::new(),
+                        warnings,
+                    })
+                    .context("failed to enqueue shared recipe for review")?;
+
+                queued_keys.insert(share::dedup_key(mr.source_url.as_deref(), &cook_text));
+                report.add(fond_import::ImportResult::Queued {
+                    title: mr.title.clone(),
+                    review_id: Some(created.id),
+                    reason: "queued for review".to_string(),
+                });
+            }
+        }
+    }
+
+    print_import_report_for_format(fmt, &report, dry_run)?;
+    if !dry_run && report.queued > 0 {
+        eprintln!("Review queued recipes with `fond review list`, then `fond review accept <id>`.");
+    }
+    Ok(())
+}
+
+fn cmd_share_publish(
+    paths: &FondPaths,
+    bundle: &std::path::Path,
+    to: Option<PathBuf>,
+    yes: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("failed to create fond data directories")?;
+
+    // Reading the manifest both validates the bundle and lets us show exactly
+    // what would leave the device before asking for consent.
+    let (manifest, _archive) = open_bundle(bundle)?;
+    manifest.validate().context("invalid share bundle")?;
+
+    let dest_dir = to.unwrap_or_else(|| shared_outbox_dir(paths));
+
+    eprintln!(
+        "Publishing copies this bundle into a shared index at {}.",
+        dest_dir.display()
+    );
+    eprintln!("fond does NOT upload anything — you control how that folder is synced or pushed.");
+    eprintln!(
+        "The following {} recipe(s) would be shared:",
+        manifest.recipes.len()
+    );
+    for r in &manifest.recipes {
+        let license = r.license.as_deref().unwrap_or("(no license specified)");
+        eprintln!("  • {} [{}]", r.title, license);
+    }
+
+    if !yes
+        && !confirm(&format!(
+            "Publish {} recipe(s) to {}?",
+            manifest.recipes.len(),
+            dest_dir.display()
+        ))
+    {
+        println!("Aborted. Nothing was published.");
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&dest_dir)
+        .with_context(|| format!("failed to create {}", dest_dir.display()))?;
+
+    let file_name = bundle
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| format!("{}.{}", manifest.bundle_id, share::BUNDLE_EXTENSION));
+    let dest = dest_dir.join(&file_name);
+
+    let bytes =
+        std::fs::read(bundle).with_context(|| format!("failed to read {}", bundle.display()))?;
+    atomic_write(&dest, &bytes).with_context(|| format!("failed to write {}", dest.display()))?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "published": dest.display().to_string(),
+                "bundle_id": manifest.bundle_id,
+                "recipes": manifest.recipes.len(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Published {} to {}", manifest.recipes.len(), dest.display());
+            println!(
+                "Share it by syncing or committing that folder — fond stays out of the network."
+            );
+        }
+    }
     Ok(())
 }
 
