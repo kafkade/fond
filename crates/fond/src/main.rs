@@ -429,7 +429,10 @@ enum Commands {
     /// Launch the web UI (Axum + HTMX, server-rendered).
     ///
     /// Starts a local HTTP server for household members who prefer a browser.
-    /// Designed for trusted LAN / self-host — no authentication.
+    /// Loopback binds (127.0.0.1) need no auth. For any other bind, configure a
+    /// shared token (FOND_AUTH_TOKEN) — fond refuses to start otherwise. Pair
+    /// exposure with TLS (native --tls-cert/--tls-key or a reverse proxy). See
+    /// the "Self-hosting fond securely" guide in the docs.
     Serve {
         /// Port to listen on
         #[arg(long, default_value = "3000", env = "FOND_PORT")]
@@ -438,6 +441,24 @@ enum Commands {
         /// Address to bind to (use 0.0.0.0 for LAN access)
         #[arg(long, default_value = "127.0.0.1", env = "FOND_BIND")]
         bind: String,
+
+        /// Shared secret required as the HTTP Basic Auth password (any username).
+        /// Enables authentication for all requests.
+        #[arg(long, env = "FOND_AUTH_TOKEN")]
+        auth_token: Option<String>,
+
+        /// Path to a PEM certificate chain for native HTTPS (requires --tls-key).
+        #[arg(long, env = "FOND_TLS_CERT")]
+        tls_cert: Option<PathBuf>,
+
+        /// Path to the PEM private key for native HTTPS (requires --tls-cert).
+        #[arg(long, env = "FOND_TLS_KEY")]
+        tls_key: Option<PathBuf>,
+
+        /// Allow binding to a non-loopback address without auth. Unsafe: exposes
+        /// your entire recipe collection and authored overlay with no gate.
+        #[arg(long)]
+        insecure_allow_no_auth: bool,
     },
 
     /// Export or import your authored overlay (notes, ratings, cook logs,
@@ -993,7 +1014,22 @@ fn main() -> Result<()> {
             context,
             recipe,
         } => cmd_substitute(&paths, &ingredient, context, recipe.as_deref(), &fmt),
-        Commands::Serve { port, bind } => cmd_serve(&paths, port, &bind),
+        Commands::Serve {
+            port,
+            bind,
+            auth_token,
+            tls_cert,
+            tls_key,
+            insecure_allow_no_auth,
+        } => cmd_serve(
+            &paths,
+            port,
+            &bind,
+            auth_token,
+            tls_cert,
+            tls_key,
+            insecure_allow_no_auth,
+        ),
         Commands::Overlay { action } => match action {
             OverlayAction::Export { dir, user } => cmd_overlay_export(&paths, dir, user, &fmt),
             OverlayAction::Import { dir } => cmd_overlay_import(&paths, dir, &fmt),
@@ -6124,7 +6160,30 @@ fn load_recipe_by_slug(paths: &FondPaths, slug: &str) -> Result<fond_domain::Rec
         .map_err(|e| anyhow::anyhow!("failed to parse recipe: {e}"))
 }
 
-fn cmd_serve(paths: &FondPaths, port: u16, bind: &str) -> Result<()> {
+/// Returns true when `bind` refers to the local loopback interface and needs no
+/// authentication gate. Hostnames `localhost`/empty are treated as loopback;
+/// anything that isn't a parseable loopback IP is treated as non-loopback.
+fn is_loopback_bind(bind: &str) -> bool {
+    let host = bind.trim();
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_serve(
+    paths: &FondPaths,
+    port: u16,
+    bind: &str,
+    auth_token: Option<String>,
+    tls_cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+    insecure_allow_no_auth: bool,
+) -> Result<()> {
     let db_path = paths.data_dir.join("fond.db");
     if !db_path.exists() {
         anyhow::bail!(
@@ -6133,13 +6192,75 @@ fn cmd_serve(paths: &FondPaths, port: u16, bind: &str) -> Result<()> {
         );
     }
 
+    // A blank/whitespace-only token counts as no token.
+    let token = auth_token.filter(|t| !t.trim().is_empty());
+    let loopback = is_loopback_bind(bind);
+
+    // TLS: require both cert and key, or neither.
+    let tls = match (tls_cert, tls_key) {
+        (Some(cert), Some(key)) => Some(fond_web::TlsConfig { cert, key }),
+        (None, None) => None,
+        (Some(_), None) => {
+            anyhow::bail!("--tls-cert was set without --tls-key; both are required for TLS")
+        }
+        (None, Some(_)) => {
+            anyhow::bail!("--tls-key was set without --tls-cert; both are required for TLS")
+        }
+    };
+
+    // Safe-by-default guard: never expose a non-loopback bind without auth
+    // unless the operator explicitly opts out.
+    if !loopback && token.is_none() {
+        if insecure_allow_no_auth {
+            eprintln!(
+                "⚠️  WARNING: serving on non-loopback address {bind} with NO authentication.\n\
+                 ⚠️  Your entire recipe collection and authored overlay (notes, ratings,\n\
+                 ⚠️  cook logs) are exposed to everyone who can reach this host.\n\
+                 ⚠️  Set FOND_AUTH_TOKEN (or --auth-token) to require a password."
+            );
+        } else {
+            anyhow::bail!(
+                "refusing to bind {bind} (non-loopback) without authentication.\n\
+                 Set a shared secret via FOND_AUTH_TOKEN or --auth-token, or (unsafe) pass\n\
+                 --insecure-allow-no-auth. Loopback (127.0.0.1) needs no auth."
+            );
+        }
+    }
+
+    // Warn when credentials would travel in cleartext over the network.
+    if !loopback && token.is_some() && tls.is_none() {
+        eprintln!(
+            "⚠️  WARNING: authentication is enabled but TLS is not. HTTP Basic Auth sends\n\
+             ⚠️  the token in cleartext (Base64 is not encryption), so anyone who can\n\
+             ⚠️  observe the network can read it. Always pair --auth-token with TLS\n\
+             ⚠️  (--tls-cert/--tls-key or a reverse proxy) or a VPN. See the\n\
+             ⚠️  'Self-hosting fond securely' guide."
+        );
+    }
+
+    let auth = match &token {
+        Some(t) => fond_web::AuthConfig::BasicToken(t.clone()),
+        None => fond_web::AuthConfig::Disabled,
+    };
+
+    let scheme = if tls.is_some() { "https" } else { "http" };
     let config = fond_web::ServeConfig {
         bind: bind.to_string(),
         port,
         data_dir: paths.data_dir.clone(),
+        auth,
+        tls,
     };
 
-    eprintln!("Starting fond web UI on http://{}:{}", bind, port);
+    eprintln!("Starting fond web UI on {scheme}://{bind}:{port}");
+    eprintln!(
+        "Authentication: {}",
+        if token.is_some() {
+            "enabled (HTTP Basic Auth)"
+        } else {
+            "disabled"
+        }
+    );
     eprintln!("Press Ctrl+C to stop.");
 
     tokio::runtime::Runtime::new()
@@ -6150,6 +6271,26 @@ fn cmd_serve(paths: &FondPaths, port: u16, bind: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loopback_binds_need_no_auth() {
+        assert!(is_loopback_bind("127.0.0.1"));
+        assert!(is_loopback_bind("127.0.0.53"));
+        assert!(is_loopback_bind("::1"));
+        assert!(is_loopback_bind("localhost"));
+        assert!(is_loopback_bind("LocalHost"));
+        assert!(is_loopback_bind("  127.0.0.1  "));
+        assert!(is_loopback_bind(""));
+    }
+
+    #[test]
+    fn non_loopback_binds_require_auth() {
+        assert!(!is_loopback_bind("0.0.0.0"));
+        assert!(!is_loopback_bind("192.168.1.10"));
+        assert!(!is_loopback_bind("10.0.0.5"));
+        assert!(!is_loopback_bind("::"));
+        assert!(!is_loopback_bind("example.local"));
+    }
 
     #[test]
     fn atomic_write_creates_file() {
