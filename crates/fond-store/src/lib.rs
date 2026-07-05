@@ -5,6 +5,7 @@
 //! from those files. The database is disposable; the files are sacred.
 
 mod cook_log;
+pub mod crypto;
 mod db;
 mod error;
 mod grocery;

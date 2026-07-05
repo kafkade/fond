@@ -19,6 +19,10 @@ pub enum StoreError {
     /// Domain-level parse error during reindex.
     #[error("parse error for {file}: {message}")]
     Parse { file: String, message: String },
+
+    /// Encryption/decryption error for the sealed overlay bundle (issue #103).
+    #[error("crypto error: {message}")]
+    Crypto { message: String },
 }
 
 impl From<rusqlite::Error> for StoreError {

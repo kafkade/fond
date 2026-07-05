@@ -45,11 +45,18 @@ use std::path::{Path, PathBuf};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::crypto::{self, KeyMaterial, KeyMode};
 use crate::{FondDb, StoreError};
 
 const USERS_DIR: &str = "users";
 const SHARED_DIR: &str = "shared";
 const NONE_USER_SLUG: &str = "_none";
+
+/// Filename of the encrypted, sealed overlay bundle within an overlay directory
+/// (issue #103). When present, this single file *replaces* the plaintext JSONL
+/// layout: it carries the whole authored overlay confidentially so it can cross
+/// untrusted file-sync.
+pub const SEALED_BUNDLE_FILE: &str = "authored-overlay.fenc";
 
 // ═══════════════════════════════════════════════════════════════════
 // Sidecar record types
@@ -129,6 +136,55 @@ pub struct MealPlanSidecar {
     pub entries: Vec<MealPlanEntrySidecar>,
 }
 
+/// The complete authored-overlay slice as an in-memory value.
+///
+/// This is the shared payload for both codecs: the plaintext JSONL layout
+/// ([`export_to_dir`]/[`import_from_dir`]) and the encrypted sealed bundle
+/// ([`crate::crypto`]). Collecting and merging go through a single engine
+/// ([`collect_bundle`]/[`apply_bundle`]) so encryption is purely a transport
+/// concern — the merge semantics (ADR-015) are identical either way.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OverlayBundle {
+    #[serde(default)]
+    pub notes: Vec<NoteSidecar>,
+    #[serde(default)]
+    pub ratings: Vec<RatingSidecar>,
+    #[serde(default)]
+    pub cook_logs: Vec<CookLogSidecar>,
+    #[serde(default)]
+    pub profiles: Vec<ProfileSidecar>,
+    #[serde(default)]
+    pub pantry: Vec<PantrySidecar>,
+    #[serde(default)]
+    pub meal_plans: Vec<MealPlanSidecar>,
+}
+
+impl OverlayBundle {
+    /// Count how many distinct user buckets the per-user records span, matching
+    /// the directory layout that a plaintext export would produce.
+    fn user_bucket_count(&self) -> usize {
+        let mut keys: std::collections::BTreeSet<Option<&str>> = std::collections::BTreeSet::new();
+        keys.extend(self.notes.iter().map(|n| n.user.as_deref()));
+        keys.extend(self.ratings.iter().map(|r| r.user.as_deref()));
+        keys.extend(self.cook_logs.iter().map(|c| c.user.as_deref()));
+        keys.extend(self.profiles.iter().map(|p| Some(p.user.as_str())));
+        keys.len()
+    }
+
+    /// Summary counts for status/export reporting.
+    pub fn summary(&self) -> ExportSummary {
+        ExportSummary {
+            notes: self.notes.len(),
+            ratings: self.ratings.len(),
+            cook_logs: self.cook_logs.len(),
+            profiles: self.profiles.len(),
+            pantry_items: self.pantry.len(),
+            meal_plans: self.meal_plans.len(),
+            users: self.user_bucket_count(),
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Export
 // ═══════════════════════════════════════════════════════════════════
@@ -154,6 +210,23 @@ pub struct ExportSummary {
     pub users: usize,
 }
 
+/// Collect the full authored overlay into an in-memory [`OverlayBundle`].
+///
+/// Honors [`ExportOptions::user`] for per-user overlays; shared overlays
+/// (pantry, meal plans) are always included. This is the single collection path
+/// used by both the plaintext and encrypted export codecs.
+pub fn collect_bundle(db: &FondDb, opts: &ExportOptions) -> Result<OverlayBundle, StoreError> {
+    let conn = db.conn();
+    Ok(OverlayBundle {
+        notes: collect_notes(conn, opts.user.as_deref())?,
+        ratings: collect_ratings(conn, opts.user.as_deref())?,
+        cook_logs: collect_cook_logs(conn, opts.user.as_deref())?,
+        profiles: collect_profiles(conn, opts.user.as_deref())?,
+        pantry: collect_pantry(conn)?,
+        meal_plans: collect_meal_plans(conn)?,
+    })
+}
+
 /// Export the authored overlay to sidecar files under `dir`.
 ///
 /// Creates `dir` (and its `users/` and `shared/` subtrees) as needed. Files are
@@ -163,33 +236,23 @@ pub fn export_to_dir(
     dir: &Path,
     opts: &ExportOptions,
 ) -> Result<ExportSummary, StoreError> {
-    let conn = db.conn();
-    let mut summary = ExportSummary::default();
+    let bundle = collect_bundle(db, opts)?;
+    let summary = bundle.summary();
 
-    // ── Per-user overlays, grouped by user name ────────────────────
-    let notes = collect_notes(conn, opts.user.as_deref())?;
-    let ratings = collect_ratings(conn, opts.user.as_deref())?;
-    let cook_logs = collect_cook_logs(conn, opts.user.as_deref())?;
-    let profiles = collect_profiles(conn, opts.user.as_deref())?;
-
-    summary.notes = notes.len();
-    summary.ratings = ratings.len();
-    summary.cook_logs = cook_logs.len();
-    summary.profiles = profiles.len();
-
-    // Group notes/ratings/cook-logs by their (optional) user name.
+    // Group per-user records by their (optional) user name.
     let mut notes_by_user: BTreeMap<Option<String>, Vec<NoteSidecar>> = BTreeMap::new();
-    for n in notes {
+    for n in bundle.notes {
         notes_by_user.entry(n.user.clone()).or_default().push(n);
     }
     let mut ratings_by_user: BTreeMap<Option<String>, Vec<RatingSidecar>> = BTreeMap::new();
-    for r in ratings {
+    for r in bundle.ratings {
         ratings_by_user.entry(r.user.clone()).or_default().push(r);
     }
     let mut logs_by_user: BTreeMap<Option<String>, Vec<CookLogSidecar>> = BTreeMap::new();
-    for c in cook_logs {
+    for c in bundle.cook_logs {
         logs_by_user.entry(c.user.clone()).or_default().push(c);
     }
+    let profiles = bundle.profiles;
 
     // The set of user buckets that need a directory.
     let mut user_keys: std::collections::BTreeSet<Option<String>> =
@@ -198,7 +261,6 @@ pub fn export_to_dir(
     user_keys.extend(ratings_by_user.keys().cloned());
     user_keys.extend(logs_by_user.keys().cloned());
     user_keys.extend(profiles.iter().map(|p| Some(p.user.clone())));
-    summary.users = user_keys.len();
 
     let users_root = dir.join(USERS_DIR);
     for key in &user_keys {
@@ -228,14 +290,9 @@ pub fn export_to_dir(
     }
 
     // ── Shared overlays ────────────────────────────────────────────
-    let pantry = collect_pantry(conn)?;
-    let meal_plans = collect_meal_plans(conn)?;
-    summary.pantry_items = pantry.len();
-    summary.meal_plans = meal_plans.len();
-
     let shared_root = dir.join(SHARED_DIR);
-    write_jsonl(&shared_root.join("pantry.jsonl"), &pantry)?;
-    write_jsonl(&shared_root.join("meal-plans.jsonl"), &meal_plans)?;
+    write_jsonl(&shared_root.join("pantry.jsonl"), &bundle.pantry)?;
+    write_jsonl(&shared_root.join("meal-plans.jsonl"), &bundle.meal_plans)?;
 
     Ok(summary)
 }
@@ -558,10 +615,7 @@ pub fn import_from_dir(db: &FondDb, dir: &Path) -> Result<MergeReport, StoreErro
     }
 
     // ── Read all sidecar records up front (outside the write txn) ──
-    let mut notes: Vec<NoteSidecar> = Vec::new();
-    let mut ratings: Vec<RatingSidecar> = Vec::new();
-    let mut cook_logs: Vec<CookLogSidecar> = Vec::new();
-    let mut profiles: Vec<ProfileSidecar> = Vec::new();
+    let mut bundle = OverlayBundle::default();
 
     let users_root = dir.join(USERS_DIR);
     if users_root.is_dir() {
@@ -570,43 +624,142 @@ pub fn import_from_dir(db: &FondDb, dir: &Path) -> Result<MergeReport, StoreErro
             if !user_dir.is_dir() {
                 continue;
             }
-            notes.extend(read_jsonl(&user_dir.join("notes.jsonl"), &mut report)?);
-            ratings.extend(read_jsonl(&user_dir.join("ratings.jsonl"), &mut report)?);
-            cook_logs.extend(read_jsonl(&user_dir.join("cook-logs.jsonl"), &mut report)?);
-            profiles.extend(read_jsonl(&user_dir.join("profile.jsonl"), &mut report)?);
+            bundle
+                .notes
+                .extend(read_jsonl(&user_dir.join("notes.jsonl"), &mut report)?);
+            bundle
+                .ratings
+                .extend(read_jsonl(&user_dir.join("ratings.jsonl"), &mut report)?);
+            bundle
+                .cook_logs
+                .extend(read_jsonl(&user_dir.join("cook-logs.jsonl"), &mut report)?);
+            bundle
+                .profiles
+                .extend(read_jsonl(&user_dir.join("profile.jsonl"), &mut report)?);
         }
     }
 
     let shared_root = dir.join(SHARED_DIR);
-    let pantry: Vec<PantrySidecar> = read_jsonl(&shared_root.join("pantry.jsonl"), &mut report)?;
-    let meal_plans: Vec<MealPlanSidecar> =
-        read_jsonl(&shared_root.join("meal-plans.jsonl"), &mut report)?;
+    bundle.pantry = read_jsonl(&shared_root.join("pantry.jsonl"), &mut report)?;
+    bundle.meal_plans = read_jsonl(&shared_root.join("meal-plans.jsonl"), &mut report)?;
 
     // ── Apply everything atomically ────────────────────────────────
     let conn = db.conn();
     let tx = conn.unchecked_transaction()?;
-
-    for note in &notes {
-        merge_note(&tx, note, &mut report)?;
-    }
-    for rating in &ratings {
-        merge_rating(&tx, rating, &mut report)?;
-    }
-    for log in &cook_logs {
-        merge_cook_log(&tx, log, &mut report)?;
-    }
-    for profile in &profiles {
-        merge_profile(&tx, profile, &mut report)?;
-    }
-    for item in &pantry {
-        merge_pantry(&tx, item, &mut report)?;
-    }
-    for plan in &meal_plans {
-        merge_meal_plan(&tx, plan, &mut report)?;
-    }
-
+    apply_records(&tx, &bundle, &mut report)?;
     tx.commit()?;
     Ok(report)
+}
+
+/// Merge a decoded [`OverlayBundle`] into the DB, returning a [`MergeReport`].
+///
+/// This is the codec-independent apply path: the plaintext file importer and the
+/// encrypted-bundle importer both funnel through the same transactional merge, so
+/// merge semantics (ADR-015) are identical regardless of transport. The whole
+/// merge runs in a single transaction (all-or-nothing) and is idempotent.
+pub fn apply_bundle(db: &FondDb, bundle: &OverlayBundle) -> Result<MergeReport, StoreError> {
+    let mut report = MergeReport::default();
+    let conn = db.conn();
+    let tx = conn.unchecked_transaction()?;
+    apply_records(&tx, bundle, &mut report)?;
+    tx.commit()?;
+    Ok(report)
+}
+
+/// Apply every record in `bundle` within an open transaction `tx`.
+fn apply_records(
+    tx: &rusqlite::Connection,
+    bundle: &OverlayBundle,
+    report: &mut MergeReport,
+) -> Result<(), StoreError> {
+    for note in &bundle.notes {
+        merge_note(tx, note, report)?;
+    }
+    for rating in &bundle.ratings {
+        merge_rating(tx, rating, report)?;
+    }
+    for log in &bundle.cook_logs {
+        merge_cook_log(tx, log, report)?;
+    }
+    for profile in &bundle.profiles {
+        merge_profile(tx, profile, report)?;
+    }
+    for item in &bundle.pantry {
+        merge_pantry(tx, item, report)?;
+    }
+    for plan in &bundle.meal_plans {
+        merge_meal_plan(tx, plan, report)?;
+    }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Encrypted sealed-bundle codec (issue #103, ADR-019)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Path of the sealed bundle within an overlay directory.
+pub fn sealed_bundle_path(dir: &Path) -> PathBuf {
+    dir.join(SEALED_BUNDLE_FILE)
+}
+
+/// If a sealed bundle exists at `dir`, report which key mode it was sealed with
+/// (so the caller can fetch a keychain key or prompt for a passphrase). Returns
+/// `Ok(None)` when no sealed bundle is present.
+pub fn peek_sealed_mode(dir: &Path) -> Result<Option<KeyMode>, StoreError> {
+    let path = sealed_bundle_path(dir);
+    if !path.exists() {
+        return Ok(None);
+    }
+    // Only the small header is needed, but the file is tiny; read it whole.
+    let bytes = std::fs::read(&path)?;
+    Ok(Some(crypto::peek_key_mode(&bytes)?))
+}
+
+/// Collect the authored overlay and write it as a single **encrypted** sealed
+/// bundle at `path`, written atomically (temp-then-rename).
+///
+/// This is the confidential counterpart to [`export_to_dir`]: it never writes
+/// plaintext personal data to disk.
+pub fn export_sealed(
+    db: &FondDb,
+    path: &Path,
+    opts: &ExportOptions,
+    key: &KeyMaterial,
+) -> Result<ExportSummary, StoreError> {
+    let bundle = collect_bundle(db, opts)?;
+    let summary = bundle.summary();
+    let sealed = crypto::seal_bundle(&bundle, key)?;
+    write_bytes_atomic(path, &sealed)?;
+    Ok(summary)
+}
+
+/// Open the encrypted sealed bundle at `path` and merge it into the DB.
+///
+/// Fails closed: a missing/wrong key or a tampered bundle returns an error and
+/// leaves the DB untouched (the merge itself is transactional).
+pub fn import_sealed(
+    db: &FondDb,
+    path: &Path,
+    key: &KeyMaterial,
+) -> Result<MergeReport, StoreError> {
+    let bytes = std::fs::read(path)?;
+    let bundle = crypto::open_bundle(&bytes, key)?;
+    apply_bundle(db, &bundle)
+}
+
+/// Write `bytes` to `path` atomically (temp-then-rename), creating parents.
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = tmp_path(path);
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 /// Resolve a user name to a local `user_id`, creating the user if needed.

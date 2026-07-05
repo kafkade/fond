@@ -58,6 +58,9 @@ impl From<StoreError> for FondError {
             StoreError::Parse { file, message } => FondError::Parse {
                 message: format!("{file}: {message}"),
             },
+            StoreError::Crypto { message } => FondError::InvalidArgument {
+                message: format!("crypto error: {message}"),
+            },
         }
     }
 }

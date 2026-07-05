@@ -44,6 +44,11 @@ and every option here is opt-in and self-hosted.
 - **It is not a hardened public endpoint.** Do not port-forward fond straight to
   the internet. Use a VPN or an authenticated reverse proxy.
 
+> This page is about protecting fond **in transit** (who can reach the web UI).
+> For at-rest protection — what's encrypted on disk, and how to encrypt the
+> authored overlay before syncing it between machines — see
+> [What fond protects](./security.md).
+
 ## Recommended stack
 
 For a household, the simplest robust setup — in order of preference:
