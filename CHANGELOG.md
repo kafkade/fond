@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyboard + pointer support in the native app: selection-driven lists (Magic Keyboard arrow keys, trackpad hover) and a ⌘R shortcut to start cook mode
 - Inventory-based recipe suggestions: `fond suggest` ranks recipes by pantry coverage % (presence-first, per ADR-009), sorted by coverage then total time. Deterministic and fully offline — no ML. Supports `--tag`, `--cuisine`, `--max-time`, `--source`, `--max-missing` (default 2), `--limit`, and `--format table|json`, and surfaces the missing required ingredients per suggestion
 
+### Security
+
+- Hardened `fond serve` for safe self-hosting: `fond serve` can now be exposed beyond loopback with authentication and TLS instead of shipping an open, plaintext endpoint. HTTP **Basic Auth** is enforced whenever a shared token is configured (`--auth-token` / `FOND_AUTH_TOKEN`) — any username, the token is the password, compared in constant time — and the `401` challenge is generic (identical whether credentials are missing or wrong, and never reveals the token or whether auth is set up). fond can terminate **TLS natively** with a supplied certificate and key (`--tls-cert`/`--tls-key`, or `FOND_TLS_CERT`/`FOND_TLS_KEY`), or you can run it behind a reverse proxy. A **safe-by-default guard** refuses to start on a non-loopback bind (e.g. `0.0.0.0`) when no token is configured, with an explicit `--insecure-allow-no-auth` escape hatch that prints a loud warning; binding to `127.0.0.1` stays frictionless with no auth required. fond also warns when auth is enabled without TLS, since HTTP Basic Auth transmits the token in cleartext (Base64 is not encryption) — always pair `--auth-token` with TLS or a VPN. New **"Self-hosting fond securely"** guide covers the threat model, a recommended VPN + reverse-proxy (Caddy) + token stack with a working example, and the native-TLS option. Stays local-first: entirely opt-in and self-hosted, with no accounts and no mandatory cloud
+
 ## [1.0.0] - 2026-06-28
 
 **Data model declared stable.** The `.cook` source-of-truth format and the

@@ -13,6 +13,7 @@ fond-store.workspace = true
 fond-core.workspace = true
 rusqlite.workspace = true
 axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 askama = "0.16"
 tower-http = { version = "0.7", features = ["fs", "compression-gzip"] }
@@ -22,3 +23,9 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+subtle = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

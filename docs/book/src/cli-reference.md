@@ -190,3 +190,34 @@ fond grocery from-recipe chicken-adobo --include-pantry
 ### `fond completions <shell>`
 
 Generate shell completions for `bash`, `zsh`, `fish`, or `powershell`.
+
+### `fond serve`
+
+Launch the server-rendered web UI (Axum + HTMX) for household members who
+prefer a browser to the CLI.
+
+```bash
+fond serve                                    # http://127.0.0.1:3000, no auth
+fond serve --port 8080                         # custom port
+FOND_AUTH_TOKEN=$(openssl rand -base64 24) \
+  fond serve --bind 0.0.0.0                     # LAN, Basic Auth required
+fond serve --bind 0.0.0.0 \
+  --tls-cert cert.pem --tls-key key.pem \
+  --auth-token "$FOND_AUTH_TOKEN"               # native HTTPS + auth
+```
+
+**Binding to anything other than loopback requires authentication.** fond
+refuses to start on a non-loopback address (e.g. `0.0.0.0`, a LAN IP) unless you
+set a shared token or explicitly opt out.
+
+| Flag / env | Purpose |
+|---|---|
+| `--port` / `FOND_PORT` | Port to listen on (default `3000`). |
+| `--bind` / `FOND_BIND` | Address to bind (default `127.0.0.1`). Use `0.0.0.0` for LAN. |
+| `--auth-token` / `FOND_AUTH_TOKEN` | Shared secret required as the HTTP Basic Auth *password* (any username). Enables auth. |
+| `--tls-cert` / `FOND_TLS_CERT` | PEM certificate chain for native HTTPS (requires `--tls-key`). |
+| `--tls-key` / `FOND_TLS_KEY` | PEM private key for native HTTPS (requires `--tls-cert`). |
+| `--insecure-allow-no-auth` | Bind non-loopback with **no** auth. Unsafe — exposes everything. |
+
+For a full recommended deployment (VPN + reverse proxy + token) and the threat
+model, see [Self-hosting fond securely](./self-hosting.md).
