@@ -43,6 +43,10 @@ flate2 = "1"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 scraper = "0.27"
 refinery = { version = "0.9", features = ["rusqlite"] }
+chacha20poly1305 = "0.11"
+argon2 = "0.5"
+zeroize = "1"
+rpassword = "7"
 tempfile = "3"
 clap_complete = "4"
 comfy-table = "7"

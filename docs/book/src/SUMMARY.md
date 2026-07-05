@@ -12,6 +12,7 @@
 - [Exporting Recipes](./exporting.md)
 - [Pantry & Grocery Lists](./pantry-grocery.md)
 - [Syncing Your Recipes](./syncing.md)
+- [What fond protects](./security.md)
 - [Self-hosting fond securely](./self-hosting.md)
 
 ---

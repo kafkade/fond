@@ -18,6 +18,7 @@ use fond_store::{
 use serde::Serialize;
 
 mod ocr;
+mod overlay_key;
 mod tui;
 mod voice_cook;
 
@@ -484,9 +485,22 @@ enum OverlayAction {
         /// Export only this user's per-user overlays (by name)
         #[arg(long)]
         user: Option<String>,
+
+        /// Encrypt the overlay into a single sealed bundle (authored-overlay.fenc)
+        /// instead of plaintext JSONL, so it can safely cross untrusted file-sync.
+        #[arg(long)]
+        encrypt: bool,
+
+        /// With --encrypt, derive the key from a passphrase (Argon2id) instead of
+        /// the OS keychain. Reads FOND_OVERLAY_PASSPHRASE or prompts.
+        #[arg(long, requires = "encrypt")]
+        passphrase: bool,
     },
 
     /// Import authored overlays from sidecar files, merging with conflict reporting.
+    ///
+    /// Transparently decrypts a sealed bundle when present; if the key is missing
+    /// the import fails closed and writes no plaintext.
     Import {
         /// Directory to read sidecars from (default: <data-dir>/overlay)
         #[arg(long)]
@@ -1031,7 +1045,12 @@ fn main() -> Result<()> {
             insecure_allow_no_auth,
         ),
         Commands::Overlay { action } => match action {
-            OverlayAction::Export { dir, user } => cmd_overlay_export(&paths, dir, user, &fmt),
+            OverlayAction::Export {
+                dir,
+                user,
+                encrypt,
+                passphrase,
+            } => cmd_overlay_export(&paths, dir, user, encrypt, passphrase, &fmt),
             OverlayAction::Import { dir } => cmd_overlay_import(&paths, dir, &fmt),
             OverlayAction::Status { dir } => cmd_overlay_status(&paths, dir, &fmt),
         },
@@ -5514,9 +5533,50 @@ fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
     // Tier 2 sync (ADR-012): after rebuilding the derived index from files,
     // merge any authored-overlay sidecars that arrived over the file-sync
     // channel so a synced device converges in a single command.
+    //
+    // An *encrypted* overlay (issue #103) is handled without ever blocking on a
+    // prompt: keychain-keyed bundles decrypt silently (the OS may ask to unlock
+    // the keychain), while passphrase-keyed bundles are skipped with a hint so
+    // reindex stays non-interactive. Fail-closed is preserved — nothing
+    // plaintext is written when a key is unavailable.
     let overlay = overlay_dir(paths);
     let merge = if overlay.exists() {
-        Some(fond_store::overlay::import_from_dir(&db, &overlay).context("overlay import failed")?)
+        match fond_store::overlay::peek_sealed_mode(&overlay)
+            .context("failed to inspect overlay directory")?
+        {
+            None => Some(
+                fond_store::overlay::import_from_dir(&db, &overlay)
+                    .context("overlay import failed")?,
+            ),
+            Some(fond_store::crypto::KeyMode::Keychain) => match overlay_key::keychain_get()? {
+                Some(key) => {
+                    let path = fond_store::overlay::sealed_bundle_path(&overlay);
+                    Some(
+                        fond_store::overlay::import_sealed(
+                            &db,
+                            &path,
+                            &fond_store::crypto::KeyMaterial::Raw(key),
+                        )
+                        .context("encrypted overlay import failed")?,
+                    )
+                }
+                None => {
+                    eprintln!(
+                        "note: an encrypted overlay is present but its keychain key is missing — \
+                         skipping merge (no plaintext written). Restore the key and run \
+                         `fond overlay import`."
+                    );
+                    None
+                }
+            },
+            Some(fond_store::crypto::KeyMode::Passphrase) => {
+                eprintln!(
+                    "note: a passphrase-encrypted overlay is present — run `fond overlay import` \
+                     to merge it (reindex does not prompt for passphrases)."
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -5558,6 +5618,8 @@ fn cmd_overlay_export(
     paths: &FondPaths,
     dir: Option<PathBuf>,
     user: Option<String>,
+    encrypt: bool,
+    passphrase: bool,
     fmt: &OutputFormat,
 ) -> Result<()> {
     paths
@@ -5568,6 +5630,47 @@ fn cmd_overlay_export(
     let target = dir.unwrap_or_else(|| overlay_dir(paths));
     let opts = fond_store::overlay::ExportOptions { user };
 
+    if encrypt {
+        let key = overlay_key::acquire_export_key(passphrase)?;
+        let path = fond_store::overlay::sealed_bundle_path(&target);
+        let summary = fond_store::overlay::export_sealed(&db, &path, &opts, &key)
+            .context("encrypted overlay export failed")?;
+
+        // Warn if plaintext sidecars linger beside the encrypted bundle — they
+        // would still leak personal data over sync.
+        let plaintext_present = target.join("users").exists() || target.join("shared").exists();
+
+        let mode = if passphrase { "passphrase" } else { "keychain" };
+        match fmt {
+            OutputFormat::Json => {
+                let out = serde_json::json!({
+                    "file": path.display().to_string(),
+                    "encrypted": true,
+                    "key_mode": mode,
+                    "plaintext_sidecars_present": plaintext_present,
+                    "summary": summary,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            }
+            OutputFormat::Table => {
+                println!(
+                    "Exported encrypted authored overlay to {} ({} key)",
+                    path.display(),
+                    mode
+                );
+                print_export_counts(&summary);
+                if plaintext_present {
+                    eprintln!(
+                        "  warning: plaintext sidecars (users/, shared/) still exist in {} — \
+                         delete them so personal data isn't synced in the clear.",
+                        target.display()
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let summary =
         fond_store::overlay::export_to_dir(&db, &target, &opts).context("overlay export failed")?;
 
@@ -5575,21 +5678,27 @@ fn cmd_overlay_export(
         OutputFormat::Json => {
             let out = serde_json::json!({
                 "dir": target.display().to_string(),
+                "encrypted": false,
                 "summary": summary,
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         }
         OutputFormat::Table => {
             println!("Exported authored overlay to {}", target.display());
-            println!("  notes:       {}", summary.notes);
-            println!("  ratings:     {}", summary.ratings);
-            println!("  cook logs:   {}", summary.cook_logs);
-            println!("  profiles:    {}", summary.profiles);
-            println!("  pantry:      {}", summary.pantry_items);
-            println!("  meal plans:  {}", summary.meal_plans);
+            print_export_counts(&summary);
         }
     }
     Ok(())
+}
+
+/// Print the per-overlay counts of an export summary (shared by both codecs).
+fn print_export_counts(summary: &fond_store::overlay::ExportSummary) {
+    println!("  notes:       {}", summary.notes);
+    println!("  ratings:     {}", summary.ratings);
+    println!("  cook logs:   {}", summary.cook_logs);
+    println!("  profiles:    {}", summary.profiles);
+    println!("  pantry:      {}", summary.pantry_items);
+    println!("  meal plans:  {}", summary.meal_plans);
 }
 
 fn cmd_overlay_import(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputFormat) -> Result<()> {
@@ -5607,15 +5716,47 @@ fn cmd_overlay_import(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputForma
         );
     }
 
-    let report =
-        fond_store::overlay::import_from_dir(&db, &target).context("overlay import failed")?;
+    // A sealed bundle (if present) takes precedence over plaintext sidecars: it
+    // must be decrypted, and we never silently fall back to plaintext.
+    let sealed_mode = fond_store::overlay::peek_sealed_mode(&target)
+        .context("failed to inspect overlay directory")?;
 
+    let (report, encrypted) = if let Some(mode) = sealed_mode {
+        let key = overlay_key::acquire_import_key(mode)?;
+        let path = fond_store::overlay::sealed_bundle_path(&target);
+        let report = fond_store::overlay::import_sealed(&db, &path, &key)
+            .context("encrypted overlay import failed (wrong key/passphrase or tampered bundle)")?;
+        (report, true)
+    } else {
+        let report =
+            fond_store::overlay::import_from_dir(&db, &target).context("overlay import failed")?;
+        (report, false)
+    };
+
+    print_overlay_import_report(&report, &target, encrypted, fmt)?;
+    Ok(())
+}
+
+/// Print an overlay merge report in the requested format (shared by
+/// `overlay import` and, in summary form, `reindex`).
+fn print_overlay_import_report(
+    report: &fond_store::overlay::MergeReport,
+    target: &std::path::Path,
+    encrypted: bool,
+    fmt: &OutputFormat,
+) -> Result<()> {
     match fmt {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            let out = serde_json::json!({
+                "dir": target.display().to_string(),
+                "encrypted": encrypted,
+                "report": report,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
         }
         OutputFormat::Table => {
-            println!("Imported authored overlay from {}", target.display());
+            let how = if encrypted { " (encrypted)" } else { "" };
+            println!("Imported authored overlay from {}{}", target.display(), how);
             println!(
                 "  notes:      {} added, {} already present",
                 report.notes_added, report.notes_skipped
@@ -5649,7 +5790,7 @@ fn cmd_overlay_import(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputForma
                     report.malformed_lines
                 );
             }
-            print_overlay_conflicts(&report);
+            print_overlay_conflicts(report);
         }
     }
     Ok(())
@@ -5661,12 +5802,16 @@ fn cmd_overlay_status(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputForma
     // Reuse the export collectors in a dry run by exporting to a summary only:
     // count local rows without writing files.
     let summary = fond_store::overlay::local_summary(&db).context("overlay status failed")?;
+    let sealed_mode = fond_store::overlay::peek_sealed_mode(&target)
+        .context("failed to inspect overlay directory")?;
 
     match fmt {
         OutputFormat::Json => {
             let out = serde_json::json!({
                 "dir": target.display().to_string(),
                 "exists": target.exists(),
+                "encrypted": sealed_mode.is_some(),
+                "key_mode": sealed_mode.map(|m| m.label()),
                 "local": summary,
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
@@ -5681,6 +5826,13 @@ fn cmd_overlay_status(paths: &FondPaths, dir: Option<PathBuf>, fmt: &OutputForma
                     "(not created yet — run `fond overlay export`)"
                 }
             );
+            match sealed_mode {
+                Some(mode) => println!("  encryption: enabled ({} key)", mode.label()),
+                None if target.exists() => {
+                    println!("  encryption: none (plaintext sidecars)")
+                }
+                None => {}
+            }
             println!("Local authored overlay:");
             println!("  notes:       {}", summary.notes);
             println!("  ratings:     {}", summary.ratings);

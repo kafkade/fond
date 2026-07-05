@@ -34,6 +34,7 @@ flate2.workspace = true
 zip.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+rpassword.workspace = true
 
 [dev-dependencies]
 assert_cmd = "2"

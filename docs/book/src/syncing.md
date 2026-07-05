@@ -209,3 +209,9 @@ does **not** sync this way, by design. Multi-device sync of that authored data i
 deliberately deferred (see
 [ADR-012](https://github.com/kafkade/fond/blob/main/docs/adr/012-sync-multi-device.md)).
 For now, treat those as per-device, or keep a single primary machine for them.
+
+If you do move the authored overlay between machines by exporting a sidecar
+(`fond overlay export`), you can **encrypt** that export so it crosses your sync
+channel confidentially — see [What fond protects](./security.md). fond relies on
+your OS's full-disk encryption for `fond.db`, `.cook` files, and photos; enable it
+(FileVault / LUKS / BitLocker) if you haven't.

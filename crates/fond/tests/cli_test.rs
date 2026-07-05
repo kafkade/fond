@@ -3140,3 +3140,110 @@ fn share_import_rejects_non_bundle() {
         .failure()
         .stderr(predicate::str::contains("not a valid .fondshare bundle"));
 }
+
+// ── Encrypted authored-overlay sidecar (issue #103) ────────────────────
+//
+// These use passphrase mode via FOND_OVERLAY_PASSPHRASE so they never touch the
+// OS keychain (which is non-deterministic in CI).
+
+/// Seed a pantry item so the overlay has authored data to export.
+fn seed_pantry(tmp: &TempDir) {
+    fond(tmp)
+        .args(["pantry", "add", "soy sauce secret"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn overlay_encrypted_passphrase_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    seed_pantry(&tmp);
+
+    // Encrypted export writes a single sealed bundle, not plaintext JSONL.
+    fond(&tmp)
+        .env("FOND_OVERLAY_PASSPHRASE", "hunter2")
+        .args(["overlay", "export", "--encrypt", "--passphrase"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("encrypted authored overlay"));
+
+    let bundle = tmp.path().join("overlay").join("authored-overlay.fenc");
+    assert!(bundle.exists(), "sealed bundle must be written");
+    assert!(
+        !tmp.path().join("overlay").join("shared").exists(),
+        "encrypted export must not write plaintext sidecars"
+    );
+
+    // The secret must not appear in the ciphertext.
+    let bytes = fs::read(&bundle).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("soy sauce secret"));
+
+    // Status reports the encryption mode.
+    fond(&tmp)
+        .args(["overlay", "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "encryption: enabled (passphrase key)",
+        ));
+
+    // Import with the right passphrase succeeds and reports the encrypted source.
+    fond(&tmp)
+        .env("FOND_OVERLAY_PASSPHRASE", "hunter2")
+        .args(["overlay", "import"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(encrypted)"));
+}
+
+#[test]
+fn overlay_encrypted_import_wrong_passphrase_fails_closed() {
+    let tmp = TempDir::new().unwrap();
+    seed_pantry(&tmp);
+
+    fond(&tmp)
+        .env("FOND_OVERLAY_PASSPHRASE", "correct")
+        .args(["overlay", "export", "--encrypt", "--passphrase"])
+        .assert()
+        .success();
+
+    // Wrong passphrase must fail — no silent plaintext fallback.
+    fond(&tmp)
+        .env("FOND_OVERLAY_PASSPHRASE", "wrong")
+        .args(["overlay", "import"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("import failed"));
+}
+
+#[test]
+fn overlay_encrypted_import_missing_passphrase_fails_closed() {
+    let tmp = TempDir::new().unwrap();
+    seed_pantry(&tmp);
+
+    fond(&tmp)
+        .env("FOND_OVERLAY_PASSPHRASE", "secret")
+        .args(["overlay", "export", "--encrypt", "--passphrase"])
+        .assert()
+        .success();
+
+    // No passphrase available and stdin is not a TTY under the test harness:
+    // import must fail closed rather than write plaintext.
+    let mut cmd = Command::cargo_bin("fond").unwrap();
+    cmd.env("FOND_DATA_DIR", tmp.path());
+    cmd.env_remove("FOND_OVERLAY_PASSPHRASE");
+    cmd.args(["overlay", "import"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("passphrase"));
+}
+
+#[test]
+fn overlay_passphrase_flag_requires_encrypt() {
+    let tmp = TempDir::new().unwrap();
+    // --passphrase without --encrypt is rejected by clap.
+    fond(&tmp)
+        .args(["overlay", "export", "--passphrase"])
+        .assert()
+        .failure();
+}
