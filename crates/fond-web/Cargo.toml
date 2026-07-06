@@ -13,7 +13,7 @@ fond-store.workspace = true
 fond-core.workspace = true
 rusqlite.workspace = true
 axum = "0.8"
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 askama = "0.16"
 tower-http = { version = "0.7", features = ["fs", "compression-gzip"] }

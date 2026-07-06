@@ -52,4 +52,4 @@ clap_complete = "4"
 comfy-table = "7"
 ratatui = "0.30"
 tokio = { version = "1", features = ["full"] }
-uniffi = "0.31"
+uniffi = "0.32"
