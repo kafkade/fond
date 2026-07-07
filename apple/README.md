@@ -12,8 +12,59 @@ cooking timeline; plus create/edit/delete recipes and attach photos, written
 back to the canonical `.cook` files with a lossless Cooklang round-trip) with an
 **iPad-optimized adaptive layout** (three-column split view + side-by-side cook
 mode with live kitchen timers) and a **watchOS companion** for active cook
-timers, wrist alerts, and a "Next up" complication. Multi-device sync is
-follow-up work.
+timers, wrist alerts, and a "Next up" complication. The app can also point at a
+**user-chosen synced folder** so its edits reach the CLI and other devices — see
+[Using the app with a synced folder](#using-the-app-with-a-synced-folder).
+
+## Using the app with a synced folder
+
+By default the app runs from a self-contained **sample library**: it seeds the
+bundled `SampleData/recipes/*.cook` into its private Application Support
+directory and rebuilds the index there. Nothing leaves the app sandbox.
+
+To share one collection with the CLI and a home-lab server (issue #104), open
+**Settings ▸ Recipe Storage** (the gear in the sidebar; ⌘, on macOS) and choose
+a folder your devices already sync — an iCloud Drive or Syncthing-managed
+directory. The app treats that folder as your
+**fond home** (ADR-002), exactly like the CLI:
+
+```text
+~/fond/               ← the folder you pick (synced)
+  recipes/            ← .cook files (source of truth) — read + written here
+  photos/             ← content-addressed images
+  fond.db             ← derived SQLite index (rebuilt automatically)
+```
+
+- **Read + write-back.** Edits, new recipes, deletes, and attached photos land
+  as `.cook`/image files in that folder using the same atomic
+  write-temp-then-rename the CLI uses, so a sync daemon never sees a
+  half-written file. Once your sync tool propagates them, `fond reindex` (or the
+  app on another device) picks them up.
+- **External changes.** The app watches the `recipes/` folder and reindexes when
+  files arrive from sync, and again whenever you return to it — so a recipe you
+  edited on your Mac appears on the phone without a manual refresh.
+- **Don't sync `fond.db`.** The index is derived and disposable; the app rebuilds
+  it from the `.cook` files. Add `fond.db` (and `fond.db-*`) to your sync tool's
+  ignore list to avoid churning a binary file and creating sync conflicts.
+- **iOS access is remembered.** The folder is stored as a security-scoped
+  bookmark, so the choice survives relaunch; the app holds the security scope
+  open for as long as it's bound to that folder.
+- **To switch back**, choose **Use Sample Library** in Settings — your folder's
+  files are left untouched.
+
+### Limitations
+
+- **Concurrent edits.** Editing the *same* recipe on two offline devices relies
+  on your file-sync tool's conflict handling (Syncthing keeps
+  `*.sync-conflict-*` copies; iCloud may prompt). The app guards a single device
+  with an optimistic hash check and reports a conflict if a file changed on disk
+  since you opened it, but cross-device merge is the file-sync + overlay-merge
+  story (ADR-012 / ADR-015).
+- **Overlay data** (notes, ratings, cook logs) is not yet written back from the
+  app — that's a follow-up that builds on `fond overlay export/import`.
+- On the **unsigned local PoC** build the sandbox/user-selected-files
+  entitlements are inert; a signed build enforces them (macOS can otherwise reach
+  `~/fond` directly).
 
 ## watchOS companion (active timers & alerts)
 

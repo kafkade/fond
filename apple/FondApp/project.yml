@@ -33,6 +33,15 @@ targets:
       - target: FondWatch
         embed: true
         destinationFilters: [iOS]
+    entitlements:
+      path: Fond.entitlements
+      properties:
+        # Sandbox + user-selected read/write so the app can read and write the
+        # folder the user picks (issue #104). On iOS the document picker grants a
+        # security-scoped URL; on a signed/sandboxed macOS build this entitlement
+        # is what keeps that access valid. Inert on the unsigned local PoC.
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
     settings:
       base:
         PRODUCT_NAME: Fond
