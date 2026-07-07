@@ -16,6 +16,7 @@ enum SidebarSelection: Hashable {
 struct SidebarView: View {
     @EnvironmentObject private var model: AppModel
     @Binding var selection: SidebarSelection?
+    @State private var showingSettings = false
 
     var body: some View {
         List(selection: $selection) {
@@ -44,5 +45,46 @@ struct SidebarView: View {
         #if os(iOS)
         .listStyle(.sidebar)
         #endif
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    showingSettings = true
+                } label: {
+                    Label("Recipe Storage", systemImage: "gearshape")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if model.location.isSynced {
+                SyncedFolderBadge()
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+                .environmentObject(model)
+        }
+    }
+}
+
+/// A small footer showing that the app is bound to a synced folder rather than
+/// the sample library, so it's obvious edits are writing back to a shared home.
+private struct SyncedFolderBadge: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let url = model.location.displayURL {
+            HStack(spacing: 6) {
+                Image(systemName: "folder.badge.gearshape")
+                Text(url.lastPathComponent)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
+        }
     }
 }
