@@ -88,7 +88,8 @@ deleted history.
   record and public salts — never the passphrase, Secret Key, or MUK. **Service authentication is
   separated from vault authorization:** destructive or key-changing operations require a **vault-key
   signature the server cannot forge**, so a reset of the login layer never authorizes vault
-  destruction.
+  destruction. See [ADR-021.2](021-optional-sync-server.md#appendix-account-authentication--pake-selection-adr-0212)
+  for the PAKE selection and the two-layer auth-vs-vault-authorization boundary.
 - The `FONDENC1 → FONDENC2` migration runs once (decrypt bundle under the old flat key, split into
   per-object blobs, encrypt under Vault-Key-derived DEKs). After that, `wrapped_vault_key[member]` is
   uploaded and subsequent transfers upload already-encrypted blobs with **no re-encryption**.
@@ -384,7 +385,7 @@ Purpose labels (domain-separated, non-exhaustive):
 | X25519 | sealed-box invitation transport | Named; sealed-box construction `[Validation Required]` (K.3) |
 | Ed25519 | roster/manifest signing, role authorization | Named; signer/threshold model `[Validation Required]` (K.8) |
 | HMAC-SHA-256 | opaque object-id namespace (ADR-021) | Named |
-| OPAQUE (RFC 9807) | account/PAKE server binding | Referenced (ADR-020/021), not redefined here |
+| OPAQUE (RFC 9807) | account/PAKE server binding | Referenced; selection & identity binding in [ADR-021.2 §C](021-optional-sync-server.md#c-rust-crate-evaluation--selection) |
 | Vault-Key wrap | wrapping `wrapped_vault_key[member]` | `[Validation Required]` XChaCha20-Poly1305 vs. AES-256-KW vs. AES-SIV (K.2) |
 
 None of these are hand-rolled or novel; FONDENC2 is a **composition** of reviewed primitives,
@@ -410,7 +411,11 @@ which is precisely why the A0.5 independent review is mandatory before any imple
    eliminate) the post-revocation exposure window (section H).
 10. **Identity ↔ OPAQUE binding** — how the X25519/Ed25519 vault identity keys bind to the OPAQUE
     login record (ADR-021) so a login-layer reset cannot forge vault authorization (extends the
-    Decision's "service auth separated from vault authorization").
+    Decision's "service auth separated from vault authorization"). → **Advanced by
+    [ADR-021.2 §E](021-optional-sync-server.md#e-binding-vault-identity-keys-to-the-opaque-record-resolves-k10)
+    (A0.4)**: the OPAQUE record commits to the vault identity public key as a non-resettable,
+    authenticated attribute distinct from the resettable password record; the residual construction
+    is tracked as ADR-021.1 §I.12.
 11. **`object_id` source & width** — ADR-021's keyed-HMAC blob id vs. a per-object random id; 16
     vs. 32 bytes (sections E, F).
 12. **Emergency Kit contents** — confirm the Kit carries the **Secret Key only** (the MUK is
