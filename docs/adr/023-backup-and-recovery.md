@@ -44,7 +44,13 @@ ADR-019). A backup is worthless unless a **restore has actually been verified** 
   passphrase key. The plaintext mode has **no dependency on ADR-020**, so device backup ships in 1.1.
 - `fond backup restore <archive> [--dry-run]` → **verifies the archive authentication and per-file
   hashes first and fails closed** on any mismatch or missing key, restores files, then `fond reindex`
-  rebuilds `fond.db`.
+  rebuilds `fond.db`. `--dry-run` reports what would change (counts by kind, destination paths)
+  without writing anything.
+- `fond backup verify <archive> [--against-source]` → the **restore-proof drill**: re-checks the
+  archive's authentication and every per-file hash (fail-closed), writing nothing, so a passing
+  archive is a proven-restorable one. `--against-source` additionally diffs the archive against the
+  live data directory (unchanged / changed / missing / new). Implemented in #113.
+- All three reports honor `--format table|json` (house rule).
 - **Cadence:** manual by default; documented **scheduled** snippets (cron/launchd) rather than a
   resident daemon, matching fond's local-first minimalism.
 

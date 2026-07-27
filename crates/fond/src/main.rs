@@ -17,6 +17,7 @@ use fond_store::{
 };
 use serde::Serialize;
 
+mod backup;
 mod ocr;
 mod overlay_key;
 mod tui;
@@ -471,6 +472,72 @@ enum Commands {
     Overlay {
         #[command(subcommand)]
         action: OverlayAction,
+    },
+
+    /// Create, restore, and verify a portable device backup (ADR-023).
+    ///
+    /// A backup is a single authenticated `FONDBKP1` archive of your `.cook`
+    /// recipes, photos, and authored-overlay sidecars — everything a restore
+    /// needs to rebuild a fond install. The derived `fond.db` is not stored; it
+    /// is rebuilt by `fond reindex` after a restore. Plaintext by default (no
+    /// key, no network); `--encrypt` seals it for untrusted media.
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Create a backup archive from your data directory.
+    Create {
+        /// Where to write the archive
+        /// (default: <data-dir>/backups/fond-backup-<timestamp>.fondbkp)
+        #[arg(long)]
+        dest: Option<PathBuf>,
+
+        /// Encrypt the archive with XChaCha20-Poly1305 so file names and
+        /// contents stay private on untrusted media. Uses the same household
+        /// key as `fond overlay --encrypt` (OS keychain by default).
+        #[arg(long, conflicts_with = "plaintext")]
+        encrypt: bool,
+
+        /// Write an unencrypted, integrity-checked archive (the default).
+        #[arg(long)]
+        plaintext: bool,
+
+        /// With --encrypt, derive the key from a passphrase (Argon2id) instead
+        /// of the OS keychain. Reads FOND_OVERLAY_PASSPHRASE or prompts.
+        #[arg(long, requires = "encrypt")]
+        passphrase: bool,
+    },
+
+    /// Restore a backup archive, verifying it first (fails closed on tamper).
+    ///
+    /// Authentication and every per-file hash are checked before a single byte
+    /// is written; a mismatch or missing key leaves your data untouched. After
+    /// restoring, `fond reindex` rebuilds the derived `fond.db`.
+    Restore {
+        /// The `.fondbkp` archive to restore
+        archive: PathBuf,
+
+        /// Report what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Verify a backup archive — the "prove restore works" drill.
+    ///
+    /// Checks the archive's authentication and every per-file hash (fail-closed),
+    /// writing nothing. Passing means a restore from this archive would succeed.
+    Verify {
+        /// The `.fondbkp` archive to verify
+        archive: PathBuf,
+
+        /// Additionally diff the archive against the current data directory,
+        /// reporting files that changed, are missing, or are new since the backup.
+        #[arg(long)]
+        against_source: bool,
     },
 }
 
@@ -1053,6 +1120,21 @@ fn main() -> Result<()> {
             } => cmd_overlay_export(&paths, dir, user, encrypt, passphrase, &fmt),
             OverlayAction::Import { dir } => cmd_overlay_import(&paths, dir, &fmt),
             OverlayAction::Status { dir } => cmd_overlay_status(&paths, dir, &fmt),
+        },
+        Commands::Backup { action } => match action {
+            BackupAction::Create {
+                dest,
+                encrypt,
+                plaintext,
+                passphrase,
+            } => backup::cmd_backup_create(&paths, dest, encrypt, plaintext, passphrase, &fmt),
+            BackupAction::Restore { archive, dry_run } => {
+                backup::cmd_backup_restore(&paths, &archive, dry_run, &fmt)
+            }
+            BackupAction::Verify {
+                archive,
+                against_source,
+            } => backup::cmd_backup_verify(&paths, &archive, against_source, &fmt),
         },
     }
 }
@@ -5522,6 +5604,47 @@ fn resolve_slug_collision(slug: &str, existing: &[String]) -> String {
 }
 
 fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
+    let (report, merge) = run_reindex(paths)?;
+
+    match fmt {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "reindex": report,
+                "overlay": merge,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        OutputFormat::Table => {
+            println!("Reindexed {} recipe(s)", report.indexed);
+            if !report.errors.is_empty() {
+                eprintln!("\nWarnings:");
+                for (file, err) in &report.errors {
+                    eprintln!("  {file}: {err}");
+                }
+            }
+            if let Some(merge) = &merge {
+                println!(
+                    "Overlay import: {} applied, {} conflict(s)",
+                    merge.applied_total(),
+                    merge.conflict_total()
+                );
+                print_overlay_conflicts(merge);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rebuild the derived index from `.cook` files and merge any authored-overlay
+/// sidecars, **without printing**. Shared by `fond reindex` and by `fond backup
+/// restore` (which reindexes after writing the restored files) so both stay in
+/// sync and JSON output remains a single document.
+fn run_reindex(
+    paths: &FondPaths,
+) -> Result<(
+    fond_store::ReindexReport,
+    Option<fond_store::overlay::MergeReport>,
+)> {
     paths
         .ensure_dirs()
         .context("failed to create fond data directories")?;
@@ -5581,33 +5704,7 @@ fn cmd_reindex(paths: &FondPaths, fmt: &OutputFormat) -> Result<()> {
         None
     };
 
-    match fmt {
-        OutputFormat::Json => {
-            let out = serde_json::json!({
-                "reindex": report,
-                "overlay": merge,
-            });
-            println!("{}", serde_json::to_string_pretty(&out)?);
-        }
-        OutputFormat::Table => {
-            println!("Reindexed {} recipe(s)", report.indexed);
-            if !report.errors.is_empty() {
-                eprintln!("\nWarnings:");
-                for (file, err) in &report.errors {
-                    eprintln!("  {file}: {err}");
-                }
-            }
-            if let Some(merge) = &merge {
-                println!(
-                    "Overlay import: {} applied, {} conflict(s)",
-                    merge.applied_total(),
-                    merge.conflict_total()
-                );
-                print_overlay_conflicts(merge);
-            }
-        }
-    }
-    Ok(())
+    Ok((report, merge))
 }
 
 // ═══════════════════════════════════════════════════════════════════
