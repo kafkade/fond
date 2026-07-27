@@ -143,7 +143,7 @@ access** to content.
 |---|---|
 | Keep ADR-012's "no server" absolutely | Leaves a real always-on/NAT gap; an *optional*, demand-gated ZK server doesn't violate local-first. But "don't build it" remains the correct outcome if E1 shows no demand. |
 | Reuse `fond serve` (Phase 4) as the sync server | Different trust model (public multi-user vs local single-user); risks exposing a local UI to the internet. |
-| SRP-6a for accounts | A stolen verifier enables offline guessing; OPAQUE (RFC 9807) preferred, SRP a reviewed fallback only. See [Appendix ADR-021.2 §B](#b-why-opaque-rfc-9807-not-srp-6a). |
+| SRP-6a for accounts | A stolen verifier enables offline guessing; OPAQUE (RFC 9807) is chosen. **No SRP fallback** (A0.5 I.15) — a negotiated fallback is a downgrade path. See [Appendix ADR-021.2 §B](#b-why-opaque-rfc-9807-not-srp-6a). |
 | Whole-recipe last-writer-wins merge | Silent data loss on concurrent edits; sibling-retaining three-way merge required instead. |
 | Server-side plaintext with "optional" encryption | Violates the zero-knowledge requirement and ADR-019; makes any hosted offering a liability. |
 | Server performs the merge | Impossible under zero-knowledge (can't read bodies); merge must be client-side. |
@@ -189,14 +189,39 @@ off on; unresolved decisions are collected in section I rather than decided sile
 **expands** — and does not restate or contradict — the Decision and Threat-model text above, into
 which the Sync-protocol bullets carry one-line "see Appendix" pointers.
 
+### A0.5 remediation-mapping table (this revision)
+
+The A0.5 adversarial review ([`docs/reviews/a05-fondenc2-adversarial-review.md`](../reviews/a05-fondenc2-adversarial-review.md))
+returned a **NO-GO** and identified structural blockers in the history topology. This revision
+applies its recommendations. Coverage for items landing in **this appendix**:
+
+| Finding | Handled in | New status |
+|---|---|---|
+| N-03 / N-12 / I.3 honest-concurrency topology | [§D DAG, CAS, head pointer](#d-authenticated-history-topology-dag-cas--signed-head) | Resolved (A0.5) |
+| N-04 historical roster binding | [§D](#d-authenticated-history-topology-dag-cas--signed-head), [§E](#e-rollback--fork--equivocation-detection) | Resolved (A0.5) |
+| N-05 own-write anti-rollback | [§E op-log commitment](#e-rollback--fork--equivocation-detection) | Resolved (A0.5) |
+| N-07 bootstrap freshness anchor | [§D checkpoints](#d-authenticated-history-topology-dag-cas--signed-head) | Resolved (A0.5) |
+| N-13 / I.1 object-id collision strength & width | [§B](#b-opaque-keyed-object-identifiers) | Resolved (A0.5): 32-byte typed id |
+| I.2 object-id key rotation-invariance | [§B](#b-opaque-keyed-object-identifiers), [§G](#g-honest-limits--what-this-cannot-do) | Resolved (A0.5): vault-lifetime key |
+| I.4 device_id & per-device keys | [§C](#c-per-device-version-vectors) | Decided per review: per-device signing keys |
+| I.5 manifest hash function | [§D](#d-authenticated-history-topology-dag-cas--signed-head) | Decided per review: SHA-256 canonical |
+| I.6 checkpoint cadence/authority | [§D](#d-authenticated-history-topology-dag-cas--signed-head) | Decided per review |
+| I.7 trusted-state home | [§E](#e-rollback--fork--equivocation-detection) | Decided per review: MAC'd file + re-trust |
+| I.8 equivocation response | [§E](#e-rollback--fork--equivocation-detection) | Decided per review: hard-stop + quarantine |
+| I.9 tombstone reaping | [§F](#f-tombstones--sibling-retaining-merge) | Decided per review: signed dominance |
+
+> **New-since-A0.5 design choices** (the DAG topology, signed frontier/head-counter, and the
+> per-device op-log below are among them) are consolidated for the re-reviewer in ADR-020's
+> [New design decisions since A0.5](020-zero-knowledge-identity.md#new-design-decisions-since-a05-not-in-the-original-review--scrutinize-these).
+
 **Keys are reused from FONDENC2, never re-invented.** The manifest signer, the manifest object's
 encryption key, and the object-id namespace key all derive from the ADR-020 hierarchy:
 
 | This appendix uses | Derived from (ADR-020) |
 |---|---|
-| object-id namespace key (§B) | the `object-id` purpose subkey, [§F label table](020-zero-knowledge-identity.md#f-per-object-dek-derivation--object-granularity) |
+| object-id namespace key `NS_objectid` (§B) | a random **vault-lifetime** namespace key, distinct from every `VK_e` ([§F vault-lifetime keys](020-zero-knowledge-identity.md#f-per-object-dek-derivation--object-granularity), I.2) |
 | manifest confidentiality (§D) | the `manifest` purpose subkey (§F), sealed as a FONDENC2 object `object_class = manifest` ([§E envelope](020-zero-knowledge-identity.md#e-envelope--wire-format-per-object)) |
-| manifest authorship (§D–§E) | the member's Ed25519 roster/manifest signing key ([§G roster](020-zero-knowledge-identity.md#g-per-member-vault-key-wrapping--the-roster)) |
+| manifest authorship (§D–§E) | the member's per-**device** Ed25519 signing key, certified by the member identity key ([§G roster / K.7](020-zero-knowledge-identity.md#g-per-member-key-wrapping--the-roster)) |
 
 ### A. What AEAD alone cannot do
 
@@ -226,33 +251,35 @@ devices** yet **leak nothing** to the server. The three obvious identifiers all 
   **confirm** its presence (known-file matching) and reveal when two members hold the same file.
 - **UUIDv7** embeds a **millisecond timestamp**, leaking creation/edit **time**.
 
-Instead the id is a keyed pseudonym under a household-secret namespace key:
+Instead the id is a keyed pseudonym under a household-secret, **vault-lifetime** namespace key:
 
 ```text
-object_id      = HMAC-SHA-256(namespace_key, canonical_input) truncated to 16 bytes
-namespace_key  = subkey_{object-id}             # ADR-020 §F `object-id` purpose subkey
-canonical_input = object_class ‖ durable_uuid   # durable_uuid: see §H
+object_id      = HMAC-SHA-256(NS_objectid, canonical_input)      # full 32-byte output
+NS_objectid    = random vault-lifetime namespace key             # ADR-020 §F; NOT any VK_e (I.2)
+canonical_input = len_prefix("fond/fondenc2/v2/objid")           # format label
+               ‖ u8(object_class) ‖ durable_uuid(16) ‖ u16_le(sub_part)   # durable_uuid: see §H
 ```
 
 - **Why keyed, not a bare hash.** Only Vault-Key holders can compute the id, so the server cannot
   correlate an id to any guessed plaintext (defeats known-file matching) and cannot mint ids.
 - **Deterministic across devices.** Every member derives the *same* `object_id` for the same object
-  because `namespace_key` and `durable_uuid` are shared — this is what lets independent devices
+  because `NS_objectid` and `durable_uuid` are shared — this is what lets independent devices
   converge without a server-assigned key.
-- **Width.** 16 bytes matches the FONDENC2 envelope `object_id` field
-  ([§E](020-zero-knowledge-identity.md#e-envelope--wire-format-per-object)); truncated HMAC-SHA-256
-  retains ≥128-bit collision resistance across a household's object count.
-
-`[Validation Required]` (I.1) the exact `canonical_input` fields (whether `object_class`, a
-sub-object index, or a per-recipe part id are included) and the truncation width (16 vs. 32 bytes) —
-aligns with ADR-020 open question K.11 (`object_id` source & width).
-
-`[Validation Required]` (I.2) the namespace key must be **epoch-invariant**. Unlike per-object DEKs —
-which are epoch-scoped so rotation re-keys them — `object_id` must **not** change when the vault
-rotates epochs, or a rotation would orphan every object's identity. But ADR-020 §F roots *all*
-subkeys (via `PRK_vault`) in the **per-epoch** Vault Key, so a subkey named `object-id` would still
-change each rotation. A0.5 must decide how to root the `object-id` namespace key in a
-**rotation-invariant** vault-lifetime secret while keeping DEKs epoch-scoped.
+- **Width — decided (A0.5, N-13 / I.1 / K.11): the full 32-byte HMAC-SHA-256 output.** A 16-byte
+  truncation gives 128-bit preimage/forgery strength but only **64-bit generic collision** strength —
+  the earlier "≥128-bit collision resistance" claim was wrong. The full 32 bytes restore 128-bit
+  collision strength, so no collision-detection/recovery machinery is needed. The FONDENC2 envelope
+  `object_id` field is 32 bytes to match ([ADR-020 §E](020-zero-knowledge-identity.md#e-envelope--wire-format-per-object)).
+- **Canonical input — decided (A0.5, I.1): a fixed typed, length-prefixed transcript** — a format
+  label, then `object_class` (`u8`), the durable UUID (16 bytes), and a fixed-width `sub_part`
+  (`u16_le`, `0` for whole-object). No delimiter-free variable fields.
+- **Namespace key — decided (A0.5, I.2): a random vault-lifetime key `NS_objectid`,** generated once
+  at vault creation and **distinct from every per-epoch `VK_e`**. It is distributed through the
+  authenticated roster directory ([ADR-020 §G](020-zero-knowledge-identity.md#g-per-member-key-wrapping--the-roster))
+  and is **epoch-invariant** — so ids survive rotation while DEKs stay epoch-scoped. Rooting it in
+  the per-epoch Vault Key (the earlier sketch) would orphan every object's identity on rotation; a
+  vault-lifetime key resolves that. The honest cost — a revoked member who learned `NS_objectid` can
+  keep enumerating ids (metadata, never content) — is explicitly accepted (§G).
 
 ### C. Per-device version vectors
 
@@ -275,69 +302,122 @@ signing key, because the vector travels **inside** the signed manifest (§D).
 
 **Join / leave.**
 
-- A **new device** joins with an all-zero implicit vector and appears in the vault **roster**
-  (ADR-020 §G) before its writes are accepted; its first write introduces its `device_id` component.
-- A **departed / revoked** device stops writing and is removed from the roster, but its **past
-  components remain** in existing vectors as immutable history — they must, or prior causality
-  breaks. Epoch rotation (ADR-020 §H) revokes its *key*, not its *history*.
+- A **new device** joins with an all-zero implicit vector and appears in the vault **roster
+  directory** (ADR-020 §G) — with its own **certified per-device signing key** — before its writes
+  are accepted; its first write introduces its `device_id` component.
+- A **departed / revoked** device stops writing and has its device certificate removed from the
+  roster, but its **past components remain** in existing vectors as immutable history — they must, or
+  prior causality breaks. Epoch rotation (ADR-020 §H) revokes its *key*, not its *history*.
 
-**Baseline (adopted).** A **single library-wide signed manifest chain** (§D) whose **entries each
-carry a per-object version vector** — one chain to verify, with per-object concurrency detection.
-`[Validation Required]` (I.3) whether to split into **finer-grained per-object sub-chains** (more
-parallelism and smaller diffs, but N chains to verify and correlate) is deferred to A0.5; the
-library-wide chain is the default, not an open choice. `[Validation Required]` (I.4) the `device_id`
-derivation and whether each device carries its own subkey/signing key for per-device revocation —
-ties to ADR-020 open question K.7.
+**`device_id` & per-device keys — decided (A0.5, I.4 / K.7).** `device_id` is a **random** 16-byte
+id, and each device carries its **own random Ed25519 signing key**, **certified** by the member
+identity key ([ADR-020 §G](020-zero-knowledge-identity.md#g-per-member-key-wrapping--the-roster)).
+A per-member-only signing key cannot support `device_id` ownership or per-device revocation; the
+per-device key does. Version-vector components, manifest signatures, counters, and revocation all
+bind to the device certificate, and every historical manifest record identifies the roster state
+that authorized that device (§D, §E).
 
-### D. Signed, hash-chained manifest & checkpoints
+**History topology — decided (A0.5, I.3 / N-03 / N-12): an authenticated multi-parent DAG**, not a
+single linear chain. A linear `prev` chain assumes one writer and would mislabel two honest devices
+extending the same head as equivocation. Manifest records therefore carry **`parents[]`** and honest
+concurrent heads are **siblings**, converged by **signed merge records** (§D). Per-object version
+vectors continue to detect per-object concurrency *within* that DAG. (Finer-grained per-object
+sub-chains remain a possible future optimization but are not required for correctness now.)
+
+### D. Authenticated history topology: DAG, CAS & signed head
 
 The **manifest** is the authenticated index of the library: it names every live object, its version
-vector, and a binding to its ciphertext, and it is **append-only and hash-chained** so the server
-cannot rewrite history undetected.
+vector, and a binding to its ciphertext. It is an **append-only, content-addressed, multi-parent
+DAG** (not a linear chain, A0.5 N-03/I.3) so **honest concurrent writers converge** instead of being
+mislabelled as equivocation, and so the server can neither **rewrite a client's witnessed history**
+nor **forge records** undetected. (It **cannot** force the server to *serve* the latest state —
+withholding/partition remains possible and is stated honestly in §E/§G.)
 
 ```text
-┌─ manifest record (plaintext shape; sealed as a FONDENC2 object, class = manifest) ─┐
-│ manifest_seq        u64      monotonic per-library sequence number                  │
-│ prev_manifest_hash  32 bytes hash of the previous record's canonical bytes (0…0 at  │
-│                              genesis)                                                │
-│ vault_epoch         u32      FONDENC2 epoch in force (ADR-020 §F)                    │
-│ author_device       bytes    device_id of the signer (a current-roster member)      │
-│ is_checkpoint       u8       1 = self-contained snapshot (see below)                 │
-│ entries[]           list     one per live object:                                   │
-│    ├ object_id      16 bytes opaque id (§B)                                          │
-│    ├ version_vector map      { device_id → counter } (§C)                            │
-│    ├ blob_hash      32 bytes hash of the object's FONDENC2 ciphertext                │
-│    └ tombstone?     opt      present iff the object is deleted (§F)                  │
-├─ signature ──────────────────────────────────────────────────────────────────────────┤
-│ ed25519_sig  64 bytes  over ALL fields above (seq ‖ prev_hash ‖ epoch ‖ author ‖     │
-│                        is_checkpoint ‖ canonical(entries)); key = the author's       │
-│                        Ed25519 roster/manifest key (ADR-020 §G)                      │
-└───────────────────────────────────────────────────────────────────────────────────────┘
+┌─ manifest record ─────────────────────────────────────────────────────────────────────┐
+│ CLEARTEXT CAS header (server-visible; needed only for addressing & append):            │
+│   record_id     32 bytes  = SHA-256(sealed envelope bytes below); external content addr │
+│   parents_ct[]  list<32B>  copy of parents[] so the server can CAS; re-checked on decrypt│
+│                                                                                         │
+│ SEALED BODY (FONDENC2 object, object_class = manifest; envelope object_id = HMAC over a  │
+│ fresh random 16-byte record-UUID, §B) — the server sees only ciphertext:                │
+│   parents[]        list      0 at genesis; 1 for a normal extension; ≥2 for a MERGE      │
+│   vault_epoch      u32       FONDENC2 epoch in force (ADR-020 §F)                        │
+│   roster_hash      32 bytes  roster directory that authorized the signer (HISTORICAL, N-04)│
+│   author_device    16 bytes  device_id of the signer                                    │
+│   device_cert      bytes     member-signed certificate for author_device (§C)           │
+│   record_kind      u8        0 = normal, 1 = checkpoint, 2 = merge                       │
+│   entries[]        list      one per affected/live object:                              │
+│      ├ object_id     32 bytes  opaque id (§B)                                            │
+│      ├ version_vector map      { device_id → counter } (§C)                              │
+│      ├ blob_hash     32 bytes  SHA-256 of the object's ENTIRE FONDENC2 envelope (I.5)    │
+│      └ tombstone?    opt       present iff the object is deleted (§F)                    │
+│   ed25519_sig  64 bytes  over the domain-separated canonical body (parents ‖ epoch ‖     │
+│                          roster_hash ‖ author ‖ cert ‖ kind ‖ canonical(entries));       │
+│                          key = the author's per-DEVICE Ed25519 key (ADR-020 §G / K.7)   │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **What each link commits to.** `prev_manifest_hash` is the hash of the immediately-preceding
-  record's canonical serialization, forming a tamper-evident chain back to the genesis record
-  (`prev = 0…0`). Altering any past record changes its hash and breaks every later link.
-- **What the signature covers.** The Ed25519 signature covers the **entire** record including
-  `manifest_seq`, `prev_manifest_hash`, and every entry's **`version_vector`** and `blob_hash`, so a
-  server can neither reposition a record in the chain nor **forge, rewind, or reorder causal state**
-  without breaking the tag. Only a **current-roster** member key is accepted (§E check 1), making
-  authorship a cryptographic role (ADR-020 §H), not a server assertion.
-- **Confidentiality.** The record is sealed as a FONDENC2 object (`object_class = manifest`,
+- **`record_id` is external, never inside the sealed body.** It is the SHA-256 of the sealed
+  envelope bytes (a content address), so it cannot appear inside the bytes it hashes. `parents[]` live
+  **inside** the signed body; a **cleartext copy** rides in the CAS header **only** so the server can
+  address and append records it cannot decrypt. On decrypt a client **re-checks** `parents_ct[]`
+  against the signed `parents[]` and rejects any mismatch — a lying server only corrupts its own CAS
+  graph, never a client's verified view.
+- **Multi-parent DAG (N-03/N-12).** A record's `parents[]` are the `record_id`s it causally extends.
+  Two honest devices that both read head `H` and each append a new record with `parents = [H]`
+  produce **two sibling heads**, not equivocation. A later **merge record** (`record_kind = 2`) with
+  `parents = [H_a, H_b]` — signed by a device — reunites them; its `entries[]` carry the merged
+  per-object version vectors (§C, §F). The DAG therefore accepts concurrency and converges it, which
+  a single linear chain could not.
+- **Content-addressed, immutable records + CAS (N-12).** The server stores records **keyed by
+  `record_id`** and offers only **compare-and-append**: a record is accepted iff every id in
+  `parents_ct[]` already exists and `record_id` is new. Because ids are content addresses, the server
+  can neither mutate a stored record (its id would change) nor invent one (it lacks a device signing
+  key). This is the external immutable record naming the linear chain lacked.
+- **Signed head / frontier pointer (corroboration, with a monotonic counter).** The current tip is a
+  **frontier** — the set of head `record_id`s with no children. A device publishes a **signed head
+  advertisement** `head_adv = Sign_device(len_prefix("fond/fondenc2/v2/head") ‖ vault_id ‖
+  roster_hash ‖ sorted(frontier_ids) ‖ head_counter)`, where **`head_counter` is that signer's own
+  strictly-monotonic counter**. Each client persists the **highest `head_counter` seen per signer**
+  in `trusted_state` (§E) and **rejects a lower one** as a replay. A head advertisement is
+  **corroboration / bootstrap freshness**, not the sole anti-rollback mechanism — the primary
+  guarantees are the own-op-log and frontier checks (§E); an advertisement whose counter regresses,
+  or whose frontier fails to descend from trusted state, is rejected.
+- **What the signature covers.** The Ed25519 body signature covers `parents[]`, `roster_hash`, and
+  every entry's `version_vector` and `blob_hash` — so a server can neither reposition a record,
+  re-parent it, nor **forge, rewind, or reorder causal state** without breaking the tag.
+- **Historical roster binding (N-04).** Each record carries the `roster_hash` **that authorized its
+  signer at signing time** plus the `device_cert`. Verification replays *that* historical roster
+  (§E check 1) — so history authored by a **later-revoked** member/device stays valid, and a signer
+  who was **not** authorized in that roster is rejected. Checking against the *current* roster alone
+  was both too strict (rejects valid old history) and too weak (doesn't prove authorization then).
+  Post-revocation abuse of an old roster is bounded by the **causal cut** (§E check 6, ADR-020
+  transition object): an old-roster record must be an **ancestor of** the epoch transition, else it is
+  handled by author (revoked → rejected; still-current → quarantined for re-authoring under `e+1`).
+- **Hash function — decided (A0.5, I.5): SHA-256** over a **domain-separated canonical full-record**
+  serialization (the HMAC/HKDF family already in FONDENC2), and `blob_hash` covers the **entire**
+  FONDENC2 envelope (header + ciphertext + tag), not just the body.
+- **Confidentiality.** The body is sealed as a FONDENC2 object (`object_class = manifest`,
   [§E envelope](020-zero-knowledge-identity.md#e-envelope--wire-format-per-object)) under the
-  `manifest` purpose subkey, so the server stores only ciphertext plus the coarse metadata it must
-  index. The **hashes and vectors live inside** the encrypted body; the server cannot read them.
-- **Checkpoints.** Periodically a device writes an `is_checkpoint` record whose `entries` are the
-  **complete** live-object set (not a delta). A checkpoint lets a new device bootstrap without
-  replaying the whole chain, bounds how far back verification must walk, and enables **tombstone
-  reaping** (§F). The chain continues from the checkpoint's hash.
+  `manifest` purpose subkey, so the server stores only ciphertext plus the cleartext CAS header it
+  needs to index (`record_id` and `parents_ct[]`). The hashes, vectors, `roster_hash`, and author all
+  live **inside** the encrypted body.
+- **Checkpoints — decided (A0.5, I.6 / N-07).** A checkpoint (`record_kind = 1`) is a record whose
+  `entries` are the **complete** live-object set (not a delta) and whose `parents[]` name **all**
+  frontier heads it summarizes (so it dominates them). It binds the historical `roster_hash`, and is
+  accepted only from an **owner/admin** device (authority) **plus** corroboration that it descends
+  from state the accepting device already trusts. A checkpoint lets a new device bootstrap without
+  replaying the whole DAG, bounds verification depth, and enables **tombstone reaping** (§F).
+- **Bootstrap freshness anchor (N-07).** A **new device must not accept any checkpoint as genesis on
+  the server's word** — the server could replay an old self-consistent checkpoint. The device's
+  trusted starting head/checkpoint commitment is carried by an **authenticated channel**: the
+  enrolling device's signed head advertisement or a roster transition
+  ([ADR-020 §H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation)),
+  never the bare server response. This closes the first-sync rollback window.
 - **Dovetails the roster chain.** This is the manifest analogue of ADR-020 §G's `prev_roster_hash`
-  roster chain; together they make membership *and* content history rollback-evident.
-
-`[Validation Required]` (I.5) the **hash function** — SHA-256 (the HMAC/HKDF family already in
-FONDENC2) vs. BLAKE3 (the FONDBKP1 integrity family). `[Validation Required]` (I.6) **checkpoint
-cadence**, **who may author** a checkpoint (any member vs. owner/admin), and how concurrent
-checkpoints reconcile.
+  roster directory chain and the §H transition object; together they make membership *and* content
+  history rollback-evident.
 
 ### E. Rollback / fork / equivocation detection
 
@@ -345,47 +425,109 @@ Detection rests on **trusted local device state** — a small, durable, per-devi
 never sees and cannot influence:
 
 ```text
-trusted_state = { last_seq, last_hash, own_counter }
-  last_seq     highest manifest_seq this device has accepted
-  last_hash    that record's hash (the head it trusts)
-  own_counter  highest counter this device has itself written (§C)
+trusted_state = { trusted_frontier, own_oplog, seen_head_counters, last_transition, mac }
+  trusted_frontier   the set of manifest record_ids this device has accepted as heads
+  own_oplog          this device's durable append-only operation log (entries, not just a head)
+  seen_head_counters map: signer_device_id -> highest head_counter seen (§D replay guard)
+  last_transition    record_id + new_epoch of the latest accepted epoch transition (ADR-020 §H)
+  mac                HMAC over the whole state, keyed by a device-local key (I.7)
 ```
+
+- **Own operation log (replaces the scalar `own_counter`, A0.5 N-05).** A single `own_counter`
+  cannot validate per-object writes: a global counter wrongly rejects a valid older object once a
+  newer write advances the device, and a per-object counter needs a map, not a scalar. Instead each
+  device keeps a **durable append-only operation log** (`own_oplog`, whose **entries are stored**, not
+  just a head hash): every local mutation appends `entry = { object_id, own_component_after,
+  prev_oplog_hash }`, hash-chained. The log is a **commitment to all of this device's own per-object
+  writes**, so a served history that **omits or lowers** any logged write is rejected (check 4).
+- **Bounded, checkpoint-rooted compaction.** The log is **never** pruned in the interior (that would
+  break the hash chain). Instead it is **re-based at a trusted checkpoint** (§D): when a checkpoint
+  the device trusts captures every object at `version_vector[own_device] ≥ own_component_after` (or a
+  tombstone for it), the device **truncates the whole prefix** and starts a **fresh chain rooted at
+  the checkpoint's `record_id`**, retaining only entries **after** the checkpoint. A **mandatory
+  checkpoint cadence** — at least every `N` records or `T` interval (exact `N`/`T` are
+  deployment-tunable) — bounds the log so check 4 never replays unbounded history; if checkpoints are
+  overdue the client warns rather than growing without limit. A server that **withholds** checkpoints
+  (only an owner/admin device can author one, §D) can still prevent compaction — this is one more face
+  of the unpreventable **withholding** limit (§G), surfaced as an overdue-checkpoint warning, not a
+  silent unbounded growth.
 
 **Requirement (not optional).** The watermark **MUST** persist in **durable, tamper-resistant local
 storage outside the disposable `fond.db`**. `fond.db` is never synced and is rebuilt from files by
 `reindex` (ADR-002/012); if the watermark lived there, a `reindex` or reset would **silently reset
-the rollback baseline**, letting a server replay an old head undetected. Only the exact **home** is
-open — `[Validation Required]` (I.7) a dedicated local state file vs. the OS keychain alongside the
-Secret Key — **not** whether it lives outside `fond.db`.
+the rollback baseline**. **Decided (A0.5, I.7): a dedicated local state file outside `fond.db`,
+atomically updated and MAC'd with a device-local key** (the OS keychain does not generally provide
+monotonic anti-rollback storage either). Backup/restore or device re-provisioning resets this
+baseline, so an explicit **re-trust flow** (re-anchor to a corroborated head, §D bootstrap anchor)
+is required and documented; the reset is a deliberate, user-visible event, never silent.
 
 On every pull the client runs these checks **before** applying anything, and **fails closed**:
 
-1. **Signature & roster.** Every record must carry a valid Ed25519 signature from a **current-roster**
-   member (ADR-020 §G). Reject unknown or removed signers — this blocks a server forging history.
-2. **Chain continuity.** Each record's `prev_manifest_hash` must equal the prior record's actual
-   hash, back to the trusted `last_hash` (or a signed checkpoint). A break is **tampering / fork**.
-3. **No rollback.** The served head must have `manifest_seq ≥ last_seq` **and** descend from
-   `last_hash`. A head with `seq < last_seq`, or a same-or-higher seq on a chain that does **not**
-   include `last_hash`, is a **rollback** → reject.
-4. **Own-write monotonicity.** For this device's own component, entries for objects it last wrote must
-   satisfy `VV[own_device] ≥ own_counter`. A manifest that **omits or lowers** this device's known
-   writes is the server **withholding / rewinding** the device's own history → reject.
-5. **No equivocation.** Two validly-signed records at the **same `manifest_seq`** with **different
-   hashes**, or two heads that fork below `last_hash`, are **equivocation** — the server showed
-   divergent histories. Each device always detects a fork of **its own** timeline; cross-device forks
-   are caught only when devices corroborate out-of-band (a shared gossip value or the roster chain).
+1. **Signature & historical roster (N-04).** Every record must carry a valid Ed25519 signature from
+   the **device key certified in the roster identified by that record's `roster_hash`** — the
+   historical authorization state, not the current roster. Reject a signer not authorized in *that*
+   roster, or a `roster_hash` that does not resolve to a validly-signed roster directory chaining
+   from trusted state. This blocks a server forging history **and** admits valid history by
+   later-revoked members.
+2. **DAG continuity.** Every `record_id` must be the SHA-256 of its sealed bytes, `parents_ct[]` must
+   match the signed `parents[]` on decrypt, and every parent id must resolve to a **known record in
+   the locally trusted DAG** — i.e. `trusted_frontier`, any of its **ancestors**, or a corroborated
+   checkpoint (§D). (Resolving to *ancestors*, not only the current frontier heads, is what lets an
+   honest sibling that branches from an earlier trusted point attach.) A dangling or non-resolving
+   parent is **tampering**.
+3. **No rollback (DAG-correct — must not reject honest concurrency).** The rule is **dominance, not
+   linear descent**: **every id in `trusted_frontier` must still be present in the served frontier, or
+   be an ancestor of (dominated by) some served head.** Additional served heads that validly extend
+   shared ancestry are **honest concurrency and are allowed** (they become siblings, merged per §F). A
+   served state is a **rollback** only if it **drops a trusted head that no served head dominates**, or
+   presents a head that does not descend from the trusted ancestry at all. (This deliberately does
+   **not** require every served head to descend from a trusted head — that would reject the very
+   sibling the DAG exists to accept.)
+4. **Own-write completeness (N-05).** Every un-pruned entry in `own_oplog` must appear, with
+   `version_vector[own_device] ≥ own_component_after`, in the served history for its `object_id`. A
+   history that omits or lowers any of this device's own logged writes is the server **withholding /
+   rewinding** the device's own history → reject.
+5. **No double-signing / stale advertisement.** Detectable equivocation is precisely: **two
+   validly-signed records by the same `author_device` with the same `parents[]` set but different
+   content** (a device provably signed two conflicting extensions of one point), or a **signed head
+   advertisement whose `head_counter` regresses** below `seen_head_counters[signer]` (§D). Honest
+   concurrent siblings — different authors, or the same author extending *different* heads — are
+   **not** equivocation; they are merged (§D, §F).
+6. **Epoch causal cut (N-04 abuse bound).** A record citing roster epoch `e` is normally valid only
+   as an **ancestor of the committed `e → e+1` transition** (ADR-020 §H transition object;
+   `last_transition` in trusted state). An epoch-`e` record that is **not** an ancestor of that
+   transition is handled by author:
+   - authored by a **revoked** device/member (absent from the `e+1` roster) → **rejected** as a
+     post-cut write under a dead roster (this is the abuse the cut exists to stop; such a member's
+     un-merged offline writes are lost, stated honestly);
+   - authored by a **still-current** member (present in the `e+1` roster) → **not** discarded:
+     **quarantined and surfaced for re-authoring under `e+1`**, so a legitimate write made offline
+     *before* the rotation but uploaded *after* is preserved, not silently dropped.
 
-**Rollback vs. fork — detection is not symmetric.** Checks 3–4 catch **rollback** *immediately and
-locally*: a rewind **below what this device has already witnessed** contradicts the trusted watermark,
-with no peer required. A **fork/equivocation the device never witnessed** — the server shows *this*
-device a self-consistent history while showing *another* device a divergent one — **cannot** be caught
-by the local watermark alone. It surfaces only **eventually**, when the two devices later compare heads
-(gossip, shared trusted state, or a subsequent manifest that would have to descend from both forks and
-cannot). Equivocation detection is therefore **eventual, not instant**, and hinges on devices actually
-reconciling.
+**Rollback vs. withholding — detection is not symmetric.** Checks 3–4 catch **rollback** *immediately
+and locally*: a rewind **below what this device has already witnessed** contradicts the trusted
+frontier and the own-op-log, with no peer required. What the local watermark **cannot** catch is a
+**partitioning / split-view server** that shows *this* device one honest-looking branch while
+**withholding** another device's concurrent branch. This is **not** an internal inconsistency the DAG
+can reject — in the DAG the two branches are legitimate concurrent siblings that would simply **merge**
+if ever served together (a merge record *can* descend from both, so "they cannot merge" is **not** a
+detector). The honest guarantee is therefore: **your own witnessed history cannot be rewound
+undetectably (rollback), but a server can still withhold/partition branches you have never seen.** That
+residual is **withholding**, and it is only surfaced — never prevented — when devices actually
+reconcile out-of-band (a fresher signed head advertisement with a higher `head_counter`, a shared
+checkpoint, or a direct device-to-device compare). A server that permanently partitions two devices
+that never reconcile keeps them siloed; §G states this limit plainly.
 
-`[Validation Required]` (I.8) the **response** to a detected fork/equivocation: hard-fail (halt sync,
-alert the user) vs. warn-and-quarantine the divergent branch.
+**Provable equivocation vs. undetectable withholding.** The one *cryptographically provable* server
+misbehaviour is a device **double-signing** (check 5): two conflicting records under one signer/parent
+set are non-repudiable evidence. Everything else the malicious server can do reduces to **withholding**
+— loud (your own writes stop advancing, or a peer reports a higher counter) but not preventable.
+
+**Response to a detected fork/equivocation — decided (A0.5, I.8): hard-stop + quarantine.**
+Automatic sync **halts** on detection; the client preserves **both** branches and the signed
+evidence, alerts the user, and presents a **quarantine/recovery workflow**. "Warn and continue" is
+rejected — it would normalize a detected integrity failure. Ordinary honest concurrency is **not** a
+fork and does not trigger this: it is merged (§D, §F) without halting.
 
 ### F. Tombstones & sibling-retaining merge
 
@@ -402,11 +544,14 @@ tombstone = { object_id, deleted_vv, deleter_device }
 `deleted_vv` is the version vector at deletion, giving a delete a causal position like any other
 write.
 
-- **Lifecycle / reaping.** A tombstone is retained until it is **causally dominated on every live
-  device** (all devices' vectors happen-after `deleted_vv`) **and** a **checkpoint** (§D) has captured
-  the deletion — only then can it be dropped without a lagging device resurrecting the object.
-  `[Validation Required]` (I.9) the exact reap predicate, and whether it counts **all roster** devices
-  or only **recently-active** ones (a permanently-offline device otherwise pins tombstones forever).
+- **Lifecycle / reaping — decided (A0.5, I.9): signed dominance by every current-roster device.** A
+  tombstone is retained until **every device in the current roster** has **signed acknowledgement /
+  causal dominance** of `deleted_vv` (its vector happens-after the delete) **and** a **checkpoint**
+  (§D) commits the deletion — only then may it be dropped without a lagging device resurrecting the
+  object. "Recently-active devices only" is **rejected** as unsafe; an offline device **pins** the
+  tombstone until it is explicitly removed from the roster by a **signed roster transition**
+  ([ADR-020 §H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation)),
+  which is what bounds indefinite pinning without silently dropping data.
 - **Delete races an edit.** If a delete and an edit are **concurrent** (`deleted_vv ‖ edit_vv`, §C),
   the edit is **retained as a live sibling** and the tombstone is surfaced as a **conflict** for the
   user — the edit is **never** silently discarded. A delete removes the object only if it **causally
@@ -432,17 +577,26 @@ the server-sync transport — deletes now propagate, via tombstones.
   writes stop advancing, or a peer reports a higher head) but **cannot force** the server to return
   data. Anti-rollback makes withholding **loud, not impossible** — the honest guarantee is
   *detection*, never *availability*. Users are told plainly (Threat model, "Withholding").
-- **Cross-device equivocation** with two internally-consistent histories is caught only when devices
-  can **compare state out-of-band**, and only **eventually** (§E, "Rollback vs. fork"): a server that
-  partitions two devices that never reconcile can keep them forked, and the local watermark alone
-  never sees it. Corroboration (shared gossip, the roster chain, an occasional direct
-  device-to-device check) shrinks but does not close this.
-- **A revoked member can still enumerate identifiers.** Because the `object-id` namespace key is
-  **epoch-invariant** (§B), a revoked member who learned it can keep **recomputing and enumerating
-  `object_id`s** after revocation — correlating which objects exist and when they change (**metadata**,
-  never content; epoch rotation re-keys DEKs but not identifiers). This is the honest cost of stable
-  cross-device identity; whether the object-id key should ever rotate — at the price of a coordinated
-  re-id pass — is `[Validation Required]` (I.2).
+- **Cross-device split-view / partition is unpreventable.** A malicious server can show two devices
+  different concurrent branches and **withhold** each from the other. In the DAG these are legitimate
+  siblings that would merge if ever served together, so this is **not** an internal inconsistency any
+  check can reject — it reduces to **withholding** (§E, "Rollback vs. withholding"): only surfaced,
+  never prevented, when devices reconcile out-of-band (a higher signed `head_counter`, a shared
+  checkpoint, or a direct device-to-device compare). The only *cryptographically provable* server
+  misbehaviour is a device **double-signing** conflicting records under one parent set. Corroboration
+  shrinks the window but does not close it.
+- **A revoked member can still enumerate identifiers.** Because the `NS_objectid` namespace key is
+  **epoch-invariant** (§B, decided per I.2), a revoked member who learned it can keep **recomputing
+  and enumerating `object_id`s** after revocation — correlating which objects exist and when they
+  change (**metadata**, never content; epoch rotation re-keys DEKs but not identifiers). This
+  post-revocation metadata capability is the honest, **explicitly accepted** cost of stable
+  cross-device identity (I.2). Should a household ever need to sever it, only a **coordinated re-id
+  pass** (re-deriving `NS_objectid` and re-identifying every object) can — an expensive, optional
+  operation, not part of ordinary rotation.
+- **Roster metadata is server-visible.** Because the membership/wrap directory is authenticated but
+  **not** confidential ([ADR-020 §G](020-zero-knowledge-identity.md#g-per-member-key-wrapping--the-roster),
+  the N-02 cycle break), the server sees member **count, roles, and public keys**. This is an
+  accepted metadata leak; content and the Vault Key stay confidential.
 - **Metadata still leaks.** Blob counts, sizes, change **timing**, and device ids remain visible
   (Threat model, "Metadata"); opaque ids (§B) remove *titles* and known-file matching, not traffic
   shape. Blob padding is deferred hardening.
@@ -461,54 +615,34 @@ rename). Until A4 lands this appendix is unimplementable, consistent with the A0
 
 ### I. Open questions for A0.5 (independent review)
 
-1. **`object_id` input & width** — exact `canonical_input` fields; 16- vs. 32-byte truncation (aligns
-   ADR-020 K.11). (§B)
-2. **Object-id key rotation-invariance** — root the `object-id` namespace key in a
-   **rotation-invariant** vault-lifetime secret rather than the per-epoch Vault Key, so ids survive
-   epoch rotation while DEKs stay epoch-scoped (ADR-020 §F roots all subkeys in the per-epoch Vault
-   Key today). Corollary: because it does **not** rotate, a revoked member retains the ability to
-   enumerate/correlate `object_id`s (metadata linkage, §G) — should the object-id key ever rotate, at
-   the cost of a coordinated re-id pass? (§B, §G)
-3. **Manifest / VV granularity** — baseline is one **library-wide** signed chain with **per-object**
-   version-vector entries; whether to split into finer-grained **per-object sub-chains** is the open
-   choice. (§C, §D)
-4. **`device_id` & per-device keys** — derivation and per-device signing/revocation (ties ADR-020
-   K.7). (§C)
-5. **Manifest hash function** — SHA-256 vs. BLAKE3. (§D)
-6. **Checkpoint cadence & authority** — frequency; who may author; concurrent-checkpoint
-   reconciliation. (§D)
-7. **Trusted-state home** — the anti-rollback watermark **MUST** live outside `fond.db` in durable,
-   tamper-resistant storage (firm requirement, §E); open only: **which** store — a dedicated local
-   state file vs. the OS keychain. (§E)
-8. **Equivocation response** — hard-fail vs. warn-and-quarantine. (§E)
-9. **Tombstone reap predicate** — dominance across which device set; interaction with
-   permanently-offline devices. (§F)
-10. **OPAQUE crate & version pin** — `opaque-ke` (facebook/novi, RFC 9807) at a pinned version vs.
-    any alternative; confirm the cited third-party review actually covers that release. `[Validation
-    Required]` (ADR-021.2 §C).
-11. **OPAQUE ciphersuite & KSF binding** — OPRF group, hash/KDF/MAC, and AKE choice, and binding the
-    OPAQUE key-stretching function to the **A0.3 Argon2id profile registry** so the vault has one
-    Argon2 regime, not two. `[Validation Required]` (ADR-021.2 §F).
-12. **Identity ↔ OPAQUE binding construction** — envelope-embedded (OPAQUE `client_identity` /
-    `export_key`-encrypted client state) vs. a sidecar Ed25519 self-signed attribute, for committing
-    the vault identity public keys to the account. Resolves **ADR-020 K.10** in principle; the
-    construction is the residual. `[Validation Required]` (ADR-021.2 §E).
-13. **Non-resettable-attribute invariant** — how the server guarantees a login/password **reset**
-    replaces the OPAQUE record but **never** rewrites the bound vault identity public key, plus the
-    reset authority and flow. `[Validation Required]` (ADR-021.2 §D, §E).
-14. **Vault-authorization signature format** — the exact Ed25519 signature (message canonicalization,
-    a `fond/fondenc2/v2/...` domain-separation label, and which roster key signs) required on every
-    destructive / key-material op, and the server's verification obligation. `[Validation Required]`
-    (ADR-021.2 §D).
-15. **SRP-6a fallback conditions** — the precise circumstances (if any) under which the reviewed
-    SRP-6a fallback engages, confirming it is never the default and never hand-rolled. `[Validation
-    Required]` (ADR-021.2 §B, §C).
-16. **Passphrase two-use domain separation** — the same passphrase feeds the OPAQUE login KSF and the
-    MUK Argon2id (A0.3 / ADR-020 §C); pin how they are domain-separated (distinct
-    `fond/fondenc2/v2/...` labels vs. the structural OPRF-secret / Secret-Key-pepper / distinct-salt
-    argument) so neither derivation's output aids attacking the other, and confirm that reusing the
-    A0.3 profile registry shares parameters only, never a derived value. `[Validation Required]`
-    (ADR-021.2 §F).
+The A0.5 review adjudicated each item. This revision applies its recommendations: items are
+**Resolved** (structural fix landed) or **Decided per review** (one option pinned), except the
+OPAQUE crate-audit items, which **remain deferred** to a human reviewer. Section pointers are to the
+(revised) sections.
+
+| # | Item | New status | Where |
+|---|---|---|---|
+| I.1 | `object_id` input & width | Decided: 32-byte typed length-prefixed transcript | §B |
+| I.2 | Object-id key rotation-invariance | Resolved: random vault-lifetime `NS_objectid`; metadata capability accepted | §B, §G |
+| I.3 | Manifest / VV granularity | Resolved: authenticated multi-parent DAG | §C, §D |
+| I.4 | `device_id` & per-device keys | Decided: random `device_id` + certified per-device signing keys | §C |
+| I.5 | Manifest hash function | Decided: SHA-256, canonical full-record, whole-envelope `blob_hash` | §D |
+| I.6 | Checkpoint cadence & authority | Decided: owner/admin, all-parent-heads, corroborated | §D |
+| I.7 | Trusted-state home | Decided: MAC'd file outside `fond.db` + re-trust flow | §E |
+| I.8 | Equivocation response | Decided: hard-stop + quarantine | §E |
+| I.9 | Tombstone reap predicate | Decided: signed dominance by every current-roster device | §F |
+| I.10 | OPAQUE crate & version pin | **Still deferred (human audit review)** | [ADR-021.2 §C](#c-rust-crate-evaluation--selection) |
+| I.11 | OPAQUE ciphersuite & KSF binding | Decided (suite); crate features/adapter **deferred** | [ADR-021.2 §F](#f-chosen-ciphersuite-parameters--a05-sign-off) |
+| I.12 | Identity ↔ OPAQUE binding | Resolved: client-anchored self-signed sidecar | [ADR-021.2 §E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
+| I.13 | Non-resettable-attribute invariant | Resolved: client-anchored; server enforcement is defense-in-depth | [ADR-021.2 §E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
+| I.14 | Vault-authorization signature format | Resolved: full pinned transcript + replay storage | [ADR-021.2 §D](#d-service-authentication-vs-vault-authorization) |
+| I.15 | SRP-6a fallback conditions | Resolved: no SRP fallback | [ADR-021.2 §B](#b-why-opaque-rfc-9807-not-srp-6a) |
+| I.16 | Passphrase two-use domain separation | Decided: length-prefixed labels + distinct profile ids | [ADR-021.2 §F](#f-chosen-ciphersuite-parameters--a05-sign-off) |
+
+**Still open (deferred to the human cryptographer).** **I.10** (and the crate-features half of
+**I.11**) — pinning the exact `opaque-ke` release/features and confirming the intervening changes
+since the 2021 v0.5.0 audit — cannot be closed by a model review; it stays `[Validation Required]`
+(ADR-021.2 §C, §F). Every other item above is decided or resolved per the review's recommendation.
 
 ## Appendix: account authentication — PAKE selection (ADR-021.2)
 
@@ -521,20 +655,36 @@ key hierarchy lives in
 Argon2id key-stretching profiles in its
 [A0.3 appendix](020-zero-knowledge-identity.md#appendix-kdf-profiles-rotation--migration-a03), the
 member roster and Ed25519 signing keys in
-[§G](020-zero-knowledge-identity.md#g-per-member-vault-key-wrapping--the-roster) /
+[§G](020-zero-knowledge-identity.md#g-per-member-key-wrapping--the-roster) /
 [§H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation), and the
 signed causal history in the
 [ADR-021.1 appendix](#appendix-authenticated-causal-history-adr-0211) above. It reuses their exact
-vocabulary (MUK, Vault Key, member KEK, epoch, roster, `wrapped_vault_key`, Ed25519 roster/manifest
+vocabulary (MUK, Vault Key, member KEK, epoch, roster, `wrapped_key_package`, Ed25519 roster/manifest
 signatures, X25519, `fond/fondenc2/v2/...` labels) and **never hand-rolls a PAKE**.
 
 **Gate reminder:** this is a paper spec. **No auth/sync code lands before the Epic A0 independent
-review (A0.5) clears.** Every `[Validation Required]` tag marks a choice the A0.5 reviewer must sign
-off on; unresolved choices are appended to the ADR-021.1
-[§I](#i-open-questions-for-a05-independent-review) list (as I.10–I.16) rather than decided here. Per
-the honesty rule of this spike, **no crate is "audited/validated" *for fond* until A0.5 signs off** —
-a *prior* third-party review of a dependency is cited as evidence, never as validation of the
-selection.
+review (A0.5) clears.** After the A0.5 remediation, items I.10–I.16 in the ADR-021.1
+[§I](#i-open-questions-for-a05-independent-review) list carry an explicit status (resolved / decided
+/ still-deferred); remaining `[Validation Required]` tags mark the choices a human reviewer must
+still sign off on. Per the honesty rule of this spike, **no crate is "audited/validated" *for fond*
+until A0.5 signs off** — a *prior* third-party review of a dependency is cited as evidence, never as
+validation of the selection.
+
+### A0.5 remediation-mapping (ADR-021.2)
+
+Coverage for the review items landing in this appendix:
+
+| Finding | Handled in | New status |
+|---|---|---|
+| I.15 / VR-020-D.1 / VR-0212-C.0 drop SRP | [§B](#b-why-opaque-rfc-9807-not-srp-6a), [§C](#c-rust-crate-evaluation--selection) | Resolved (A0.5): no fallback |
+| VR-0212-C.1 / C.3 audit-provenance overclaim | [§C](#c-rust-crate-evaluation--selection) | Resolved (A0.5) |
+| VR-0212-F.8 record-dump claim | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Resolved (A0.5): excludes OPRF seed |
+| I.12 / I.13 / N-09 client-anchored identity | [§E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) | Resolved (A0.5) |
+| I.14 vault-authorization transcript | [§D](#d-service-authentication-vs-vault-authorization) | Resolved (A0.5) |
+| VR-0212-F.1–F.6 ciphersuite | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: OPAQUE-3DH ristretto255/SHA-512 |
+| VR-0212-F.5 / F.7 KSF domain & profile ids | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: distinct domain + profile ids |
+| I.16 passphrase two-use separation | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: length-prefixed labels |
+| I.10 / I.11 crate audit & features | [§C](#c-rust-crate-evaluation--selection), [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Still deferred (human audit) |
 
 ### Scope & pointer map
 
@@ -543,8 +693,8 @@ selection.
 | A. Threat model for account authentication | ADR-021 [Threat model](#threat-model); ADR-020 [Threat model](020-zero-knowledge-identity.md#threat-model) | #4 |
 | B. Why OPAQUE (RFC 9807), not SRP-6a | ADR-021 Alternatives `SRP-6a for accounts`; ADR-020 Alternatives `SRP-6a as the primary PAKE` | #2 |
 | C. Rust crate evaluation & selection | ADR-021 Decision (per-user OPAQUE accounts); ADR-020 [§J primitives](020-zero-knowledge-identity.md#j-primitives) | #1 |
-| D. Service authentication vs. vault authorization | ADR-020 [§G](020-zero-knowledge-identity.md#g-per-member-vault-key-wrapping--the-roster) / [§H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation) roster & Ed25519 | #3 |
-| E. Binding vault identity keys to the OPAQUE record | ADR-020 [K.10](020-zero-knowledge-identity.md#k-open-questions-for-a05-independent-crypto-review) | #3 |
+| D. Service authentication vs. vault authorization | ADR-020 [§G](020-zero-knowledge-identity.md#g-per-member-key-wrapping--the-roster) / [§H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation) roster & Ed25519 | #3 |
+| E. Binding vault identity keys to the account (client-anchored) | ADR-020 [K.10](020-zero-knowledge-identity.md#k-open-questions--a05-remediation-status) | #3 |
 | F. Chosen ciphersuite, parameters & A0.5 sign-off | ADR-020 [§J primitives](020-zero-knowledge-identity.md#j-primitives); A0.3 Argon2id registry | #4 |
 
 It does **not** redefine the vault key hierarchy, the per-object envelope, DEK derivation, or the
@@ -605,39 +755,43 @@ decisive difference is **what a stolen server record lets an attacker do offline
   costlier per guess than SRP's cheap verifier attack, and, for fond, still capped by the two-secret
   / vault-authorization separation (§A, §D).
 
-**Decision.** OPAQUE (RFC 9807) is the **primary** aPAKE; **SRP-6a is retained only as a reviewed
-fallback** — never the default, never hand-rolled — for an environment where a maintained OPAQUE
-implementation is genuinely unavailable. The conditions under which the fallback would ever engage
-are an open question (§G, I.15). Any claim that either option is "audited" or "validated" *for fond*
-is downgraded to `[Validation Required]` pending A0.5 (§C).
+**Decision — decided (A0.5, I.15 / VR-020-D.1 / VR-0212-C.0): OPAQUE (RFC 9807) is the sole account
+aPAKE; there is no SRP-6a fallback.** A negotiated or availability-triggered fallback is a
+**downgrade path** — an attacker who can suppress OPAQUE forces the weaker verifier-based protocol —
+and the candidate `srp` crate has **never received an independent third-party aPAKE audit** and
+permits offline guessing after verifier theft. If a reviewed OPAQUE implementation is genuinely
+unavailable at implementation time, **the sync/account feature stays disabled** rather than
+downgrading authentication. The SRP-6a analysis above is retained only as the **rationale for
+rejecting it**, not as a specified fallback. Any claim that OPAQUE is "audited" or "validated" *for
+fond* is downgraded to `[Validation Required]` pending A0.5 (§C).
 
 ### C. Rust crate evaluation & selection
 
-**Recommended: `opaque-ke` (facebook/novi) as the OPAQUE implementation, with RustCrypto `srp` as the
-reviewed SRP-6a fallback.** Every maintenance/audit statement below is *evidence for A0.5*, not a
-validation — the *selection* is `[Validation Required]` until A0.5 signs off, and **fond never
-hand-rolls a PAKE**.
+**Decided: `opaque-ke` (facebook/novi) as the OPAQUE implementation, with no SRP-6a fallback (A0.5
+I.15 / VR-0212-C.0).** Every maintenance/audit statement below is *evidence for A0.5*, not a
+validation — the exact release/features are `[Validation Required]` until a human reviewer signs off
+(I.10), and **fond never hand-rolls a PAKE**.
 
 | Crate | Role | Maintenance / provenance | Audit provenance | RFC conformance | Dependency footprint |
 |---|---|---|---|---|---|
-| `opaque-ke` | OPAQUE aPAKE (primary) | Facebook/novi; the reference-grade Rust OPAQUE, tracking the CFRG work that became RFC 9807 | Reports a **prior third-party cryptographic review** — A0.5 MUST locate it, cite it, and confirm it covers the pinned release `[Validation Required]` | Implements OPAQUE-3DH per RFC 9807; upstream test vectors published `[Validation Required]` | Elliptic-curve group (ristretto255 / P-256), its `voprf` OPRF dependency, plus KSF / `hkdf` / `hmac` / `sha2` / `rand` / `zeroize` — larger, justified by aPAKE properties |
-| `voprf` | Oblivious PRF (transitive dep of `opaque-ke`) | Facebook/novi; the OPRF `opaque-ke` builds on, tracking RFC 9497 | Reviewed alongside the OPAQUE work `[Validation Required]` | RFC 9497 VOPRF `[Validation Required]` | RustCrypto curve + hash primitives |
-| `srp` (RustCrypto) | SRP-6a (fallback only) | RustCrypto `PAKEs`; smaller, widely used | No dedicated aPAKE audit assumed; treat as unaudited for this purpose `[Validation Required]` | SRP-6a (RFC 2945 family), **not** an aPAKE | Minimal (`num-bigint-dig`, `digest`, `sha2`) |
+| `opaque-ke` | OPAQUE aPAKE (sole account PAKE) | Facebook/novi; the reference-grade Rust OPAQUE, tracking the CFRG work that became RFC 9807 | The public NCC Group review ([archived PDF, 2021](https://web.archive.org/web/20211213145520id_/https://research.nccgroup.com/wp-content/uploads/2021/12/NCC_Group_WhatsAppLLC_OPAQUE_Report_2021-12-10_v1.3.pdf)) covered **v0.5.0 and an earlier draft, NOT the current v4.0.1**. Cite it as **ancestor-lineage evidence only**; a human MUST review the intervening changes for the pinned release. Do **not** call the pinned release "audited" `[Validation Required]` (I.10) | Implements OPAQUE-3DH per RFC 9807; exercises upstream RFC vectors — **conformance evidence, not an audit** `[Validation Required]` | Elliptic-curve group (ristretto255), its `voprf` OPRF dependency, plus KSF / `hkdf` / `hmac` / `sha2` / `rand` / `zeroize` — larger, justified by aPAKE properties |
+| `voprf` | Oblivious PRF (transitive dep of `opaque-ke`) | Facebook/novi; the OPRF `opaque-ke` builds on, tracking RFC 9497 | The current standalone `voprf 0.5.0` **postdates** the 2021 OPAQUE audit; "reviewed alongside" would **overstate** exact-code coverage. Treat as **unaudited in its current form** `[Validation Required]` | Runs RFC 9497 VOPRF vectors — conformance evidence `[Validation Required]` | RustCrypto curve + hash primitives |
 
 Rationale for `opaque-ke`:
 
-- **It is the audited-lineage RFC 9807 implementation in Rust**, built by the group that authored much
-  of the OPAQUE / VOPRF standards work, so an RFC-conformance and review trail *exists to cite* —
-  subject to A0.5 confirming both against the exact pinned version (`[Validation Required]`, §G I.10).
+- **It is the RFC 9807 implementation in Rust with an audit *lineage* to cite**, built by the group
+  that authored much of the OPAQUE / VOPRF standards work. The 2021 NCC review is **lineage
+  evidence** for an ancestor version, **not** an audit of the pinned release; the audit gap for
+  intervening changes is an explicit human-review item (`[Validation Required]`, §G I.10).
 - **It composes cleanly with the rest of FONDENC2:** its KSF slot accepts **Argon2id**, letting us
   bind account key-stretching to the **A0.3 Argon2id profile registry** rather than introducing a
   second Argon2 regime (§F).
 - **The larger dependency footprint is the price of an aPAKE** and is acceptable given the
-  server-compromise properties (§B); the `srp` fallback stays available for constrained builds.
+  server-compromise properties (§B).
 
-**Explicit non-goal.** Neither OPAQUE nor SRP is implemented by hand. If no maintained, reviewable
-OPAQUE crate is acceptable at implementation time, the fallback is the maintained RustCrypto `srp`
-crate under the §B caveats — **never** a bespoke construction.
+**Explicit non-goal.** OPAQUE is **not** implemented by hand, and there is **no** hand-rolled or
+SRP-6a fallback. If no maintained, reviewable OPAQUE crate is acceptable at implementation time, the
+account/sync feature **stays disabled** — **never** a bespoke or unaudited-verifier construction.
 
 ### D. Service authentication vs. vault authorization
 
@@ -666,15 +820,40 @@ relay* these signed objects but can neither author nor alter them: a client reje
 destructive action not carrying a valid owner/admin Ed25519 signature chaining from known roster
 state.
 
+**Vault-authorization signature transcript — decided (A0.5, I.14).** Every destructive / key-material
+operation carries an Ed25519 signature over a **fully pinned, canonical, domain-separated transcript**
+— no ambiguous or implementation-defined message:
+
+```text
+auth_sig = Sign_{ed25519}( canonical(
+    label        = len_prefix("fond/fondenc2/v2/authz")   # domain-separation label
+  ‖ protocol_ver = u16                                     # FONDENC2 protocol version
+  ‖ vault_id ‖ account_id ‖ member_id ‖ device_id          # who
+  ‖ op_type     = u8                                       # delete / roster / epoch / enroll / revoke
+  ‖ roster_hash ‖ vault_epoch                              # authorization state in force
+  ‖ request_nonce = 16 bytes ‖ monotonic_counter = u64     # replay protection
+  ‖ not_after   = u64 (optional; 0 = none)                 # expiry where relevant
+  ‖ payload_digest = SHA-256(op payload) ) )               # what
+```
+
+- **Which key signs.** The member/admin's **per-device** Ed25519 key (K.7), verified against the
+  device certificate in the roster identified by `roster_hash` (historical authorization, ADR-021.1
+  N-04) — so a later-revoked signer's *past* authorized ops still verify, and an unauthorized signer
+  is rejected.
+- **Replay storage & verification obligation.** The server (and every client) persists seen
+  `(member_id, device_id, request_nonce)` / `monotonic_counter` and **rejects replays**; the canonical
+  encoding is length-prefixed and fixed-width so two distinct operations can never share a transcript.
+  This is the implementable transcript the earlier text lacked.
+
 **The invariant that falls out of the separation.** A **login-layer reset restores account access but
 can NEVER authorize vault destruction or membership change.** Concretely: a password reset replaces
 the OPAQUE record (Layer 1); it does **not** — and cannot — reconstruct the member's **Secret Key**
 (never uploaded, ADR-020) or their **Ed25519 vault identity key** (Layer 2). So a reset actor can log
 back in and read ciphertext, but cannot unwrap the Vault Key, cannot sign a new roster, and cannot
 delete or rewrite vault state. An attacker who fully compromises the *service* layer is likewise
-capped: no forged vault authorization, by construction. The server's obligation to ensure a reset
-**never** rewrites the bound vault identity key is the non-resettable-attribute invariant of §E
-(open: §G I.13).
+capped: no forged vault authorization, by construction. Identity continuity is **anchored in
+client-held trusted state** (the signed roster/account chain), with any server-side immutability
+being **defense-in-depth only** — the client-anchored construction of §E (I.13).
 
 **Account recovery ≠ data recovery (the honest flip-side).** A server-side login reset — or an admin
 / bootstrap action — restores **account access only**. It does **not** recover vault *data*:
@@ -687,119 +866,127 @@ encrypted data by resetting the password; account recovery and data recovery are
 distinct prerequisites
 ([ADR-020 "Emergency Kit & recovery"](020-zero-knowledge-identity.md#emergency-kit--recovery)).
 
-### E. Binding vault identity keys to the OPAQUE record (resolves K.10)
+### E. Binding vault identity keys to the account (client-anchored, resolves K.10)
 
-ADR-020 **K.10** asks how the X25519 / Ed25519 vault identity keys bind to the OPAQUE login record so
-a login-layer reset cannot forge vault authorization. This spike **resolves it in principle**; the
-exact construction is the only residual (§G I.12).
+ADR-020 **K.10** asks how the X25519 / Ed25519 vault identity keys bind to the account so a
+login-layer reset cannot forge vault authorization. **Decided (A0.5, I.12 / I.13 / N-09): a
+client-anchored, self-signed sidecar chained into the roster/account history** — *not* an
+OPAQUE-envelope / `export_key` binding, and *not* a server-enforced immutable column, because the
+threat model treats the server as **malicious**, not merely buggy.
 
-**Resolution.** At account registration the client commits the member's **vault identity public keys**
-(Ed25519 signing, X25519 transport — ADR-020 §G) to the account, and the server stores that
-commitment as an **authenticated, non-resettable attribute** kept **distinct from the resettable
-OPAQUE password record**:
+- **Why not envelope/export-key.** OPAQUE `client_identity` authenticates an identity for **one**
+  registration record and `export_key` is tied to **that** record; a password reset normally mints a
+  **fresh** record and export key. Neither is a reset-independent anchor, so binding identity to the
+  OPAQUE envelope would let a reset silently rebind identity.
+- **Why not a server "non-resettable column".** A malicious server cannot be trusted to preserve an
+  immutable attribute across a reset it performs. Server immutability is therefore **defense-in-depth
+  only**, never the security invariant.
 
-- **Resettable record** = the OPAQUE registration record (envelope + OPRF / AKE material). A password
-  reset **replaces** this.
-- **Non-resettable attribute** = the committed vault identity public key(s), bound at first
-  registration and immutable except via an **Ed25519 vault-key-signed rotation** (never via a
-  password reset, never by the server).
+**Client-anchored construction.** The member's vault identity public keys (Ed25519 signing, X25519
+transport — ADR-020 §G) are published as a **canonical self-signed sidecar attribute**:
 
-The server MUST enforce that replacing the resettable record **never** rewrites the non-resettable
-attribute (§G I.13). This is what makes §D's invariant hold end-to-end: a reset restores Layer-1
-access but leaves the Layer-2 identity commitment — and therefore vault authorization — untouched.
+```text
+identity_commitment = { account_id, member_id, vault_identity_pubkeys, prev_commitment_hash }
+sidecar_sig         = Sign_{member_ed25519}( len_prefix("fond/fondenc2/v2/identity"
+                        ‖ account_id ‖ member_id ‖ vault_identity_pubkeys
+                        ‖ prev_commitment_hash ‖ registration_context) )
+```
 
-**Construction options (`[Validation Required]`, §G I.12).** Two viable bindings, to be chosen at
-A0.5:
+- **Chained into roster/account history.** Each commitment carries `prev_commitment_hash`, chaining
+  from the member's prior commitment and into the signed **roster directory** chain (ADR-020 §G) —
+  so identity continuity is a **client-verifiable hash chain**, not a server promise.
+- **Clients reject unchained identity changes.** A client **rejects** any identity/key change that
+  does **not** chain (via `prev_commitment_hash` + a valid old-key signature) from the commitment it
+  already trusts. A rotation is a new self-signed commitment **authorized by the old identity key**;
+  a first-registration commitment is trusted on first sight (TOFU) and pinned thereafter.
+- **Reset leaves identity untouched.** A password reset replaces only the resettable OPAQUE record;
+  it neither produces a valid `sidecar_sig` (the server lacks the identity private key) nor a valid
+  chain link, so it **cannot** rebind identity. The server MAY *also* mark the attribute append-only
+  (defense-in-depth), but clients never rely on that.
 
-1. **Envelope-embedded.** Carry the vault identity public key inside OPAQUE's authenticated
-   `client_identity` / `cleartext_credentials`, and/or encrypt a client-authored binding record under
-   OPAQUE's per-user **`export_key`** so it is recoverable only by the legitimate client. The binding
-   then rides the OPAQUE record itself.
-2. **Sidecar self-signed attribute.** Store the vault identity public key as a separate server
-   attribute accompanied by an **Ed25519 self-signature** over
-   `account_id ‖ vault_identity_pubkey ‖ registration_context` under a `fond/fondenc2/v2/...`
-   domain-separation label. The signature (which the server cannot produce) authenticates the
-   attribute; the server treats it as append-only.
-
-Option 2 keeps the non-resettable attribute cleanly separable from the resettable OPAQUE record (a
-natural fit for §D's reset invariant); option 1 couples them more tightly but leans on OPAQUE's own
-authenticated fields. The message canonicalization and label for both the binding self-signature and
-the per-operation authorization signature (§D) are `[Validation Required]` (§G I.14).
+The canonical encoding and label for both this sidecar signature and the §D authorization signature
+are **pinned** (length-prefixed `fond/fondenc2/v2/...` labels, decided under I.14 in §D).
 
 ### F. Chosen ciphersuite, parameters & A0.5 sign-off
 
-All figures below are **placeholders**, every one `[Validation Required]` at A0.5 (§G I.11); they
-exist to anchor the review, not to decide it.
+The **suite is pinned** (A0.5 VR-0212-F.1–F.6); the **Argon2id KSF triples remain deferred** to the
+K.13 measured-device review, and the **exact `opaque-ke` types/features/dependency graph** remain a
+human-audit item (I.10/I.11). "Pinned" below means fixed by decision; `[Validation Required]` marks
+what still needs the human reviewer.
 
-**OPAQUE ciphersuite (RFC 9807 / `opaque-ke` configuration):**
+**OPAQUE ciphersuite (RFC 9807 / `opaque-ke` configuration) — pinned:**
 
-| Component | Placeholder | Note |
+| Component | Pinned choice | Note |
 |---|---|---|
-| AKE | OPAQUE-3DH | the RFC 9807 authenticated key exchange `[Validation Required]` |
-| OPRF group | ristretto255 (alt. P-256) | RFC 9497 VOPRF; group choice `[Validation Required]` |
-| Hash | SHA-512 | paired with ristretto255 per `opaque-ke` defaults `[Validation Required]` |
-| KDF / MAC | HKDF-SHA-512 / HMAC-SHA-512 | `[Validation Required]` |
-| **KSF (key-stretching)** | **Argon2id via the A0.3 profile registry** | bind to `PROFILE[kdf_profile_id]` so the vault keeps **one** Argon2 regime, not two `[Validation Required]` (§G I.11) |
-| Nonce / seed lengths | per RFC 9807 | `[Validation Required]` |
+| AKE | **OPAQUE-3DH** | the primary RFC 9807 construction (F.1); no alternative AKE |
+| OPRF group | **ristretto255** | RFC 9497 VOPRF; P-256 is **not** a runtime alternative (F.2) |
+| Hash | **SHA-512** | the defined partner for ristretto255 (F.3) |
+| KDF / MAC | **HKDF-SHA-512 / HMAC-SHA-512** | aligns with the profile; pin exact crate types/lengths (F.4) |
+| **KSF (key-stretching)** | **Argon2id via the A0.3 profile registry, under a distinct OPAQUE domain** | shares the parameter table only, with its own protocol domain + fixed-salt adapter (F.5); triples deferred (K.13) |
+| Nonce / seed lengths | **per RFC 9807** | exact suite lengths, no application override (F.6) |
 
-**KSF binding (important).** The OPAQUE key-stretching function reuses the **A0.3 Argon2id profile
-registry**
+**KSF binding — decided (A0.5, VR-0212-F.5 / F.7).** The OPAQUE key-stretching function reuses the
+**A0.3 Argon2id profile registry**
 ([ADR-020 A0.3 appendix](020-zero-knowledge-identity.md#appendix-kdf-profiles-rotation--migration-a03))
-rather than defining independent Argon2 parameters, so account login and MUK derivation share one
-pinned, budgeted, append-only parameter table. Whether the account KSF profile and the member's MUK
-profile are the *same* `kdf_profile_id` or two registry entries is `[Validation Required]`.
+for its **parameter table only**, but under an **explicit, distinct OPAQUE protocol domain** and the
+crate adapter's pinned **fixed-salt** semantics — RFC conformance vectors use the identity KSF and do
+**not** exercise this integration, so it is called out separately. The account KSF and the member MUK
+use **distinct domain-specific profile ids even if their initial triples match** (F.7), so a
+login-latency retune can never silently change vault-unlock policy.
 
-**Passphrase used twice — domain-separated (`[Validation Required]`, §G I.16).** The *same* user
-passphrase feeds **two** derivations: the **OPAQUE login** (service auth) and the **MUK** Argon2id
-(vault unwrap; [ADR-020 §C](020-zero-knowledge-identity.md#c-domain-separation--the-two-secret-muk) /
-the A0.3 appendix). These MUST be **domain-separated** so the server-side OPAQUE record can never
-assist an attack on the MUK, and MUK material can never assist forging an OPAQUE login. Reusing the
-A0.3 Argon2id **profile registry** as OPAQUE's KSF shares only the *tuned parameter table*, **not**
-the derived value: the two stretches are **separate invocations over distinct inputs and salts** —
-OPAQUE's KSF runs over the **OPRF-transformed** password (keyed by the server's OPRF secret, and never
-mixing in the Secret Key), while the MUK runs over the **raw passphrase + Secret-Key pepper**
-(ADR-020 §C) under its own per-member salt and `fond/fondenc2/v2/...` label — so their outputs are
-independent by construction. Whether that independence is pinned via **distinct domain-separation
-labels** or rests on the **structural** OPRF-secret / Secret-Key-pepper / distinct-salt argument is
-`[Validation Required]` (§G I.16).
+**Passphrase used twice — domain-separated, decided (A0.5, I.16).** The *same* user passphrase feeds
+the **OPAQUE login** (service auth) and the **MUK** Argon2id (vault unwrap;
+[ADR-020 §C](020-zero-knowledge-identity.md#c-domain-separation--the-two-secret-muk)). These are
+domain-separated by **explicit length-prefixed application labels** — `fond/fondenc2/v2/opaque-ksf`
+for the OPAQUE KSF input and `fond/fondenc2/v2/muk` for the MUK — **in addition to** the structural
+separation (the OPAQUE KSF runs over the **OPRF-transformed** password keyed by the server's OPRF
+secret and never mixes in the Secret Key, while the MUK runs over the **raw passphrase + Secret-Key
+pepper** under its own per-member salt). Independent salts and secret inputs are retained and no
+derived value is ever reused, so neither derivation's output aids attacking the other. Reusing the
+A0.3 registry shares parameters only, never a derived value.
 
-**Threat-notes recap — what a FULL server compromise does and does not yield (for A0.5, from §A;
-every claim `[Validation Required]`).**
+**Threat-notes recap — what a FULL server compromise does and does not yield (for A0.5, from §A).**
 
-- **(a) OPAQUE login records → no offline password guessing.** A dump of the OPAQUE records yields no
-  offline-guessable verifier (§B); pre-computation is resisted by the OPRF secret, and online guessing
-  is bounded by server rate-limits, not cryptography.
-- **(b) Exfiltrated `wrapped_vault_key` blobs + OPAQUE records → still no vault decryption.** The
-  **Secret Key is never on the server** (ADR-020 two-secret model), so even holding every wrap blob
-  and OPAQUE record the attacker cannot derive the **MUK** or unwrap the **Vault Key**; and without an
-  Ed25519 vault key it cannot forge vault authorization (§D). The blast radius of a breach is capped
-  by material the server never possesses.
+- **(a) OPAQUE login records alone → no offline password guessing — decided qualification (A0.5,
+  VR-0212-F.8).** A dump of the OPAQUE records **excluding the `oprf_seed`** yields no
+  offline-guessable verifier and no OPRF oracle, so it does not enable offline verification;
+  pre-computation is resisted by the OPRF secret. But a **corrupted single server that also holds the
+  `oprf_seed`** **can** mount an offline dictionary attack, priced per guess by the KSF, exactly as
+  [RFC 9807 §10.11](https://www.rfc-editor.org/rfc/rfc9807.html#section-10.11) states. Rate limits do
+  **not** constrain a malicious operator; the honest claim is "records-without-seed give no offline
+  guessing", not "no offline guessing ever".
+- **(b) Exfiltrated `wrapped_key_package` blobs + OPAQUE records → still no vault decryption.** The
+  **Secret Key is never on the server** (ADR-020 two-secret model), so even holding every wrapped key
+  package and OPAQUE record the attacker cannot derive the **MUK** or unwrap the **Vault Key**; and
+  without an Ed25519 vault key it cannot forge vault authorization (§D). The blast radius of a breach
+  is capped by material the server never possesses.
 - **(c) But metadata still leaks — do not overclaim.** Blob counts, sizes, change timestamps, and
   device ids remain visible to the server, and a revoked member can still enumerate opaque
   `object_id`s (cross-ref [ADR-021.1 §G](#g-honest-limits--what-this-cannot-do) and the ADR-021
   Threat model's documented residuals). Zero-knowledge covers **content**, not traffic analysis.
 
-**A0.5 sign-off checklist.** The independent reviewer must confirm: (1) the OPAQUE crate + pinned
-version and its cited audit scope (I.10); (2) the full ciphersuite and the KSF↔A0.3-registry binding
-(I.11); (3) the identity↔OPAQUE binding construction resolving K.10 (I.12); (4) the
-non-resettable-attribute server invariant and reset flow (I.13); (5) the per-operation Ed25519
-vault-authorization signature format (I.14); (6) the SRP-6a fallback conditions (I.15); (7) the
-passphrase two-use domain separation between the OPAQUE KSF and the MUK (I.16). **No auth/sync code
-lands until all seven clear.**
+**A0.5 sign-off checklist.** The independent reviewer must still confirm: (1) the exact `opaque-ke`
+`4.0.1` / `voprf` features and dependency graph despite the 2021 v0.5.0 audit gap (I.10); (2) the KSF
+fixed-salt adapter and crate types against the pinned suite (I.11); (3) the client-anchored identity
+construction (I.12/I.13); (4) the vault-authorization transcript (I.14); and (5) the Argon2id KSF
+triples once measured (K.13). Items resolved in this revision — no SRP fallback (I.15), the pinned
+suite (F.1–F.6), distinct KSF domain/profile ids (F.5/F.7), the qualified record-dump claim (F.8),
+and the length-prefixed two-use labels (I.16) — no longer block, but the crate-audit and measured
+figures remain gating. **No auth/sync code lands until the deferred items clear.**
 
-### G. New open questions & validation
+### G. A0.5 remediation status & validation
 
-- **New open questions.** A0.4 appends seven items to the ADR-021.1
-  [§I](#i-open-questions-for-a05-independent-review) list (extending, never renumbering): **I.10**
-  OPAQUE crate & version pin; **I.11** ciphersuite & KSF↔A0.3-registry binding; **I.12**
-  identity↔OPAQUE binding construction (resolves ADR-020 **K.10**); **I.13** non-resettable-attribute
-  server invariant; **I.14** vault-authorization signature format; **I.15** SRP-6a fallback
-  conditions; **I.16** passphrase two-use domain separation (OPAQUE KSF vs. MUK). ADR-020 **K.10** is
-  **advanced / resolved-in-principle** here (§E) and carries a one-line pointer back; its residual
-  construction is I.12.
+- **ADR-021.2 items (I.10–I.16), post-remediation.** **Resolved:** **I.12/I.13** (client-anchored
+  self-signed identity sidecar, §E), **I.14** (vault-authorization transcript, §D), **I.15** (no SRP
+  fallback, §B/§C). **Decided per review:** **I.11** ciphersuite (OPAQUE-3DH ristretto255/SHA-512,
+  §F) and **I.16** (length-prefixed two-use labels + distinct profile ids, §F). **Still deferred to
+  the human reviewer:** **I.10** (exact `opaque-ke 4.0.1` / `voprf` features and dependency graph
+  despite the 2021 v0.5.0 audit gap) and the crate-adapter half of **I.11** (fixed-salt KSF adapter),
+  plus the Argon2id KSF triples (K.13). Full status is in the ADR-021.1
+  [§I table](#i-open-questions-for-a05-independent-review).
 - **Not a re-spec of the vault.** This appendix decides the *account-authentication* primitive and the
   auth-vs-authorization boundary only; the key hierarchy, envelope, roster, and causal history remain
   authoritative in ADR-020 and the ADR-021.1 appendix. The whole stays a **composition of reviewed
-  primitives** (OPAQUE / RFC 9807, VOPRF / RFC 9497, Argon2id, Ed25519, X25519) with **nothing
+  primitives** (OPAQUE / RFC 9807, VOPRF / RFC 9497, Argon2id, Ed25519, X25519, HPKE) with **nothing
   hand-rolled** — which is exactly why the A0.5 independent review is mandatory before any
   implementation.
