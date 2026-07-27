@@ -10,6 +10,11 @@ It is a supported, tested path today. Personal-overlay sync (notes, ratings,
 cook logs) is a separate, later problem — see
 [ADR-012](https://github.com/kafkade/fond/blob/main/docs/adr/012-sync-multi-device.md).
 
+> **Sync is not a backup.** File sync also propagates *deletions* and corruption —
+> if you `rm` a recipe or a file is mangled, the change replicates everywhere. For
+> point-in-time copies you can restore from, schedule
+> [device backups](./scheduled-backups.md) as well.
+
 ## The one rule: never sync `fond.db`
 
 Your fond data directory looks like this:
