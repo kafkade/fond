@@ -1,0 +1,151 @@
+{
+  "format": "fond-a05-illustrative-vectors-v1",
+  "status": "ILLUSTRATIVE-FOR-THE-PLACEHOLDER-CIPHERSUITE",
+  "honesty": "Primitive-level reference outputs only. They do not resolve open protocol choices or constitute a reviewed FONDENC2 ciphersuite.",
+  "reviewed_spec_sources_sha256": {
+    "020-zero-knowledge-identity.md": "bd6e5f416efc07103afff388ca78865bb99d8d1b7780a7760477e82f8b202210",
+    "021-optional-sync-server.md": "8506690433c3b3e0774f8d035f89d794c480c19d16f55542206b95982ac144c2"
+  },
+  "generator_environment": {
+    "python": "3.13.7",
+    "cryptography": "49.0.0",
+    "argon2-cffi": "25.1.0",
+    "PyNaCl": "1.6.2"
+  },
+  "vectors": [
+    {
+      "id": "fondenc2-envelope-xchacha20poly1305-001",
+      "status": "ILLUSTRATIVE-FOR-THE-PLACEHOLDER-CIPHERSUITE",
+      "construction": "XChaCha20-Poly1305-IETF",
+      "header_layout": "magic[8] || version_u8 || object_class_u8 || epoch_u32_le || object_id[16] || nonce[24]",
+      "header_length": 54,
+      "magic_hex": "464f4e44454e4332",
+      "version_hex": "02",
+      "object_class": 0,
+      "epoch": 16909060,
+      "epoch_u32_le_hex": "04030201",
+      "object_id_hex": "101112131415161718191a1b1c1d1e1f",
+      "dek_hex": "97287892cce0e7190f001e56c63ca74cecbffb29a078f31fee4dcf9315797fa7",
+      "nonce_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",
+      "aad_hex": "464f4e44454e4332020004030201101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",
+      "plaintext_hex": "666f6e6420464f4e44454e433220696c6c75737472617469766520656e76656c6f706520766563746f72007632",
+      "ciphertext_hex": "db7e048c2fd201bf4975ba8654aa19764a10346d83fd468745b6a3cb9fea4a9b0cff3803f121e8dcd2882caf91",
+      "tag_hex": "dec2d0296209889c5b849117d25a61b0",
+      "sealed_body_hex": "db7e048c2fd201bf4975ba8654aa19764a10346d83fd468745b6a3cb9fea4a9b0cff3803f121e8dcd2882caf91dec2d0296209889c5b849117d25a61b0",
+      "envelope_hex": "464f4e44454e4332020004030201101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7db7e048c2fd201bf4975ba8654aa19764a10346d83fd468745b6a3cb9fea4a9b0cff3803f121e8dcd2882caf91dec2d0296209889c5b849117d25a61b0",
+      "assertions": [
+        "aad_hex equals the entire 54-byte cleartext header",
+        "decrypt(sealed_body_hex, aad_hex, nonce_hex, dek_hex) equals plaintext_hex"
+      ]
+    },
+    {
+      "id": "fondenc2-hkdf-sha256-001",
+      "status": "ILLUSTRATIVE-FOR-THE-PLACEHOLDER-CIPHERSUITE",
+      "construction": "HKDF-SHA-256",
+      "vault_key_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "extract_salt_ascii": "fond/fondenc2/v2/vault",
+      "extract_salt_hex": "666f6e642f666f6e64656e63322f76322f7661756c74",
+      "prk_hex": "00eccbc6bdbbb06d4976586c24785bba409de717e42d6ada502bf8cfcffc6c5a",
+      "purpose_ascii": "content",
+      "epoch": 16909060,
+      "epoch_u32_le_hex": "04030201",
+      "subkey_info_layout": "ASCII('fond/fondenc2/v2/subkey') || ASCII('content') || epoch_u32_le",
+      "subkey_info_hex": "666f6e642f666f6e64656e63322f76322f7375626b6579636f6e74656e7404030201",
+      "subkey_length": 32,
+      "subkey_hex": "0c1d1b639f8631c1e1fcc11b246c02c66a40da1469a6e65b808cc98eba902ca4",
+      "object_class": 0,
+      "object_id_hex": "101112131415161718191a1b1c1d1e1f",
+      "dek_info_layout": "ASCII('fond/fondenc2/v2/dek') || object_class_u8 || object_id[16]",
+      "dek_info_hex": "666f6e642f666f6e64656e63322f76322f64656b00101112131415161718191a1b1c1d1e1f",
+      "object_dek_length": 32,
+      "object_dek_hex": "97287892cce0e7190f001e56c63ca74cecbffb29a078f31fee4dcf9315797fa7",
+      "cross_check": "Python hmac/hashlib output matched cryptography HKDF and HKDFExpand"
+    },
+    {
+      "id": "fondenc2-argon2id-profile2-placeholder-001",
+      "status": "ILLUSTRATIVE-FOR-THE-PLACEHOLDER-CIPHERSUITE",
+      "construction": "Argon2id",
+      "scope": "Profile-only KAT; intentionally does not decide K.1 Secret-Key binding",
+      "profile_id": 2,
+      "profile_name": "mobile/watch-constrained-placeholder",
+      "argon2_version": 19,
+      "password_utf8": "fond illustrative profile passphrase",
+      "password_hex": "666f6e6420696c6c7573747261746976652070726f66696c652070617373706872617365",
+      "salt_hex": "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+      "m_cost_kib": 65536,
+      "t_cost": 3,
+      "p_cost": 1,
+      "output_length": 32,
+      "output_hex": "5338a5a03624b9a80196c89057536a68070bf99cba84d6f1460d26a61ebe386e"
+    },
+    {
+      "id": "fondenc2-manifest-entry-ed25519-001",
+      "status": "ILLUSTRATIVE-FOR-THE-PLACEHOLDER-CIPHERSUITE",
+      "construction": "Ed25519",
+      "scope": "Primitive sign/verify only; payload is illustrative and is not the missing canonical manifest serialization",
+      "payload_layout": "label_nul || object_id[16] || vv_count_u8 || device_id[16] || counter_u64_le || blob_hash_sha256[32] || tombstone_u8",
+      "private_seed_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "public_key_hex": "2543b92ff1095511476adc8369db6ddc933665a11978dda1404ee1066ca9559d",
+      "object_id_hex": "101112131415161718191a1b1c1d1e1f",
+      "device_id_hex": "606162636465666768696a6b6c6d6e6f",
+      "counter": 7,
+      "blob_hash_hex": "0431a099f89e25066b5f751a4dfce64982eea27588fe25145080599fee244af7",
+      "payload_hex": "666f6e642f666f6e64656e63322f76322f6d616e69666573742d656e74727900101112131415161718191a1b1c1d1e1f01606162636465666768696a6b6c6d6e6f07000000000000000431a099f89e25066b5f751a4dfce64982eea27588fe25145080599fee244af700",
+      "signature_hex": "c759c775c21f5af77bea2dc43baf812d21bca8a9dd86220185293e03a369f97075b44dd636fba2d7ccd38144d2e6068cc4157d7044145642790c1de48f9e0c07",
+      "assertion": "Ed25519 verify(public_key_hex, payload_hex, signature_hex) succeeds"
+    }
+  ],
+  "blocked_vectors": [
+    {
+      "category": "vault-key-wrap-unwrap",
+      "blocked_by": [
+        "K.1 MUK binding",
+        "K.2 wrap primitive",
+        "K.13 profile figures",
+        "undefined roster-binding AAD"
+      ]
+    },
+    {
+      "category": "full-manifest-verification",
+      "blocked_by": [
+        "I.3 concurrent history topology",
+        "I.4 device identity",
+        "I.5 hash function",
+        "I.6 checkpoint rules",
+        "undefined canonical serialization",
+        "undefined roster-history binding"
+      ]
+    },
+    {
+      "category": "object-id",
+      "blocked_by": [
+        "K.11/I.1 input and width",
+        "I.2 rotation-invariant key root",
+        "A4 durable UUID dependency"
+      ]
+    },
+    {
+      "category": "roster-chain",
+      "blocked_by": [
+        "K.8 signer and ownership model",
+        "undefined hash and canonical serialization",
+        "unresolved epoch-key distribution"
+      ]
+    },
+    {
+      "category": "member-invitation",
+      "blocked_by": [
+        "K.3 sealed-box construction",
+        "undefined recipient-key authentication"
+      ]
+    },
+    {
+      "category": "opaque-login",
+      "blocked_by": [
+        "I.10 exact crate review",
+        "I.11 ciphersuite and KSF",
+        "I.16 application-level domain separation"
+      ]
+    }
+  ]
+}
