@@ -415,3 +415,256 @@ which is precisely why the A0.5 independent review is mandatory before any imple
     vs. 32 bytes (sections E, F).
 12. **Emergency Kit contents** — confirm the Kit carries the **Secret Key only** (the MUK is
     re-derived) and prints **no** Vault Key material (section on Emergency Kit & recovery).
+13. **Argon2id profile figures & budget** — the concrete `m_cost`/`t_cost`/`p_cost` per registered
+    profile, the target unlock-time / peak-memory budget they are tuned to (desktop vs.
+    mobile/watch), the salt width (16 vs. 32 bytes), and the registry-wide `m_cost` ceiling (see the
+    profile registry in the A0.3 appendix below).
+14. **Profile deprecation & forced upgrade** — the lifecycle policy for a deprecated
+    `kdf_profile_id`: refused for new wraps but still accepted to open old records, and whether
+    unlock silently re-wraps the MUK-record under the current active profile (forced upgrade) (A0.3
+    appendix, profile registry).
+15. **Legacy-blob disposition** — the post-migration default for the `FONDENC1` blob (retain vs.
+    secure-delete) and the secure-delete guarantees achievable on SSD / copy-on-write filesystems
+    (A0.3 appendix, migration algorithm).
+16. **Cross-object rotation atomicity** — how a roster epoch bump and the ADR-021.1 signed manifest
+    (`vault_epoch`) stay consistent under a crash mid-rotation, so no reader observes a half-rotated
+    vault (A0.3 appendix, rotation state machine).
+
+## Appendix: KDF profiles, rotation & migration (A0.3)
+
+This appendix concretizes four sketches from the [FONDENC2 appendix](#appendix-fondenc2-protocol)
+above into implementable detail: the **pinned KDF profiles**
+([§D](#d-pinned-kdf-profiles--the-authenticated-params-fix)), the **two-secret MUK derivation**
+([§C](#c-domain-separation--the-two-secret-muk)), the **epoch rotation / revocation** procedure
+([§H](#h-enrollment-roles-invitation-revocation-epoch-rotation)), and the **one-time
+`FONDENC1` → `FONDENC2` migration** ([§I](#i-fondenc1--fondenc2-migration-one-time)). It
+**references** those sections rather than restating them, reusing their exact vocabulary (MUK,
+Vault Key, epoch, `kdf_profile_id`, `PROFILE[...]`, member KEK, `fond/fondenc2/v2/...`, roster,
+Ed25519). New unresolved choices are appended to the FONDENC2
+[§K](#k-open-questions-for-a05-independent-crypto-review) list as K.13–K.16, not decided here.
+
+**Gate reminder:** this is a paper spec. Every `[Validation Required]` tag marks a choice the A0.5
+independent reviewer must sign off on; no crypto/sync code lands before the Epic A0 review clears.
+
+### Scope & pointer map
+
+| This appendix subsection | Concretizes | Acceptance criterion |
+|---|---|---|
+| Argon2id profile registry | [§D](#d-pinned-kdf-profiles--the-authenticated-params-fix) | #1 |
+| MUK derivation parameters | [§C](#c-domain-separation--the-two-secret-muk) | #2 |
+| Key rotation & revocation state machine | [§H](#h-enrollment-roles-invitation-revocation-epoch-rotation) | #3 |
+| `FONDENC1` → `FONDENC2` migration algorithm | [§I](#i-fondenc1--fondenc2-migration-one-time) | #4 |
+
+It does **not** re-explain the key hierarchy (§B), the per-object envelope (§E), DEK derivation
+([§F](#f-per-object-dek-derivation--object-granularity)), or the roster (§G) — those remain
+authoritative in the FONDENC2 appendix and are only cited.
+
+### Argon2id profile registry
+
+*Concretizes [§D](#d-pinned-kdf-profiles--the-authenticated-params-fix) — the authenticated-params
+fix.*
+
+- **Registry structure.** `PROFILE: kdf_profile_id (u8) → { m_cost_kib: u32, t_cost: u32,
+  p_cost: u32 }`, a fixed table **compiled into every client build**. The `kdf_profile_id` byte is
+  the *only* selector; free-form Argon2 integers from a header never drive derivation (the §D fix).
+- **Append-only, never mutate.** Once a `kdf_profile_id` ships, its parameter triple is **frozen**
+  for the life of the format — editing it would silently change every MUK derived under that id and
+  break unlock. Re-tuning allocates a **new** id; existing ids are never edited, removed, or reused.
+  Ids may be **deprecated** (below) but the table only ever grows.
+- **Reject-before-derive.** On unlock the client looks up `kdf_profile_id` in its compiled table. An
+  id that is unknown, out of range, or withdrawn fails the unlock **before any Argon2 invocation and
+  before any KDF memory is allocated** — the concrete structural closure of the pre-auth
+  resource-exhaustion vector (§D). The heaviest work an attacker can trigger is therefore bounded by
+  the registry's `m_cost` ceiling, never by attacker-supplied header bytes.
+- **Authenticating the selected id.** `kdf_profile_id` travels in the per-member wrap entry's
+  cleartext header and is bound into that entry's AEAD **associated data**. If raw params are also
+  echoed for forward-compatible auditing, they MUST equal `PROFILE[kdf_profile_id]`; a mismatch or
+  any tampering fails the Poly1305 tag — again **before** Argon2 runs. A hostile server can thus
+  neither downgrade nor inflate the profile.
+- **Deprecation lifecycle.** A profile moves `active → deprecated → withdrawn`. A `deprecated` id is
+  still accepted to **open** existing wrap records (backward compatibility) but is refused for
+  **new** wraps; unlock under a deprecated id MAY trigger a forced re-wrap of the member's
+  `wrapped_vault_key` under the current active profile. A `withdrawn` id is refused outright (used
+  only to retire a profile later found too weak). Whether unlock performs the forced upgrade
+  silently is `[Validation Required]` (K.14).
+- **Concrete starting profiles — every figure `[Validation Required]` (K.13):**
+
+| id | Name | `m_cost` | `t_cost` | `p_cost` | output |
+|---|---|---|---|---|---|
+| `PROFILE[1]` | desktop-interactive | ~256 MiB (`262144` KiB) | 3 | 1 | 32 B |
+| `PROFILE[2]` | mobile/watch-constrained | ~64 MiB (`65536` KiB) | 3 | 1 | 32 B |
+
+These figures are **illustrative anchors, not decisions**: A0.5 tunes each triple against a target
+budget — e.g. desktop unlock ≤ ~1 s and mobile/watch ≤ ~1.5 s at acceptable peak RAM — and pins a
+registry-wide `m_cost` **ceiling** (e.g. ≤ ~1 GiB) so even the heaviest registered profile cannot
+exhaust a device. A second, lighter profile exists precisely because a background unlock on a
+memory-constrained phone or watch cannot afford the desktop `m_cost`. The chosen profile is recorded
+once, per member, at wrap creation; different members/devices of the same vault MAY use different
+profiles, since the profile governs only that member's MUK stretch, not the shared Vault Key.
+
+**Per-member Vault-Key wrap entry (shape-only; the authoritative byte layout lives in
+`crates/fond-store/src/crypto.rs` once implemented, per the FONDENC2 §E convention):**
+
+```text
+┌─ Per-member Vault-Key wrap entry (roster field; FONDENC2 §G) ──────────────┐
+│ member_id       16 bytes    pseudonymous member id                         │
+│ epoch           u32 LE      epoch this wrap is valid for (§H)              │
+│ kdf_profile_id  u8          selects PROFILE[id] for THIS member's MUK       │
+│ salt            16 bytes    per-member Argon2 salt (CSPRNG)                 │
+│ nonce           24 bytes    XChaCha20 nonce for the wrap AEAD              │
+├─ wrap ciphertext ───────────────────────────────────────────────────────────┤
+│ AEAD over the 32-byte Vault Key                                            │
+│   key = member KEK = HKDF(MUK)                          (FONDENC2 §G)       │
+│   MUK = Argon2id(passphrase, secret = Secret Key, salt, PROFILE[id])       │
+│   AAD = member_id ‖ epoch ‖ kdf_profile_id ‖ salt ‖ roster binding         │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+The wrap **construction** itself (XChaCha20-Poly1305 keywrap vs. AES-256-KW vs. AES-SIV) is open
+question **K.2** (§G); the `nonce` field shown applies to the XChaCha20-Poly1305 option and would be
+absent for a deterministic keywrap. What A0.3 pins here is that `kdf_profile_id` and `salt` are
+**authenticated header fields**, so the profile cannot be tampered before Argon2 runs.
+
+### MUK derivation parameters
+
+*Concretizes [§C](#c-domain-separation--the-two-secret-muk) — the two-secret MUK.*
+
+`MUK = Argon2id(password = passphrase, secret = Secret Key, salt, params = PROFILE[kdf_profile_id])`.
+A0.3 pins the surrounding parameters:
+
+- **Salt.** 16 bytes (128-bit), drawn from the system CSPRNG per member at wrap creation, stored in
+  the wrap entry above, never reused across vaults or members. Widening to 32 bytes is folded into
+  the K.13 budget review.
+- **Output length.** 32 bytes — feeds the member KEK HKDF (§G).
+- **Passphrase encoding.** UTF-8 with **NFC** normalization, as already pinned in §C (not restated).
+- **Domain-separation labels.** Derivations stay in the `fond/fondenc2/v2/...` namespace (§C); the
+  KEK step uses the `fond/fondenc2/v2/kek` label already given in §G. The MUK itself is the raw
+  Argon2id output; label binding happens at the HKDF that produces the KEK.
+- **Two-secret binding stays open (K.1).** This appendix pins salt, length, encoding, and profile,
+  but does **not** resolve whether the Secret Key enters via Argon2's keyed `secret` (pepper) slot or
+  an explicit HKDF pre-mix — that remains FONDENC2 open question **K.1** for A0.5. Both
+  parameterizations consume the same salt and profile pinned here.
+
+### Key rotation & revocation state machine
+
+*Concretizes [§H](#h-enrollment-roles-invitation-revocation-epoch-rotation) — epoch rotation.*
+
+- **Triggers.** (1) member **revocation**; (2) **passphrase / Secret-Key change**; (3)
+  **periodic / policy** rotation; (4) **suspected compromise**. Triggers 1, 3, and 4 bump the epoch;
+  a passphrase / Secret-Key change is a **re-wrap only**, with no epoch bump (below).
+
+```mermaid
+stateDiagram-v2
+    [*] --> SteadyE
+    SteadyE --> SteadyE: passphrase / Secret-Key change (re-wrap one key, no epoch bump)
+    SteadyE --> Rotating: revocation / periodic / suspected compromise
+    Rotating --> SteadyNext: VK e+1 re-wrapped for remaining members, signed roster e+1 published
+    SteadyNext --> [*]
+    note right of Rotating
+      object-id namespace key stays epoch-invariant (ADR-021.1 I.2): NOT re-derived on rotation
+    end note
+```
+
+- **Ordered rotation procedure (revocation = epoch rotation, no bulk re-encryption).**
+  1. **Precondition:** an owner/admin Ed25519 signing key — roles are cryptographic, not
+     server-enforced (§H).
+  2. Generate a fresh random 32-byte `VK_{e+1}`; set `epoch = e + 1`.
+  3. Re-wrap `VK_{e+1}` for each **remaining** member's KEK (the wrap entry above); the revoked
+     member gets no `e+1` wrap.
+  4. Build the `e+1` roster (revoked member removed), chain `prev_roster_hash` to the `e` roster, and
+     **sign** it with the owner/admin key.
+  5. Publish the `e+1` roster. From here, **new** writes derive DEKs from `VK_{e+1}` (§F); existing
+     objects keep their sealing epoch and are **not** re-encrypted.
+  - **Atomicity.** Steps 2–5 are prepared locally and published as one signed, hash-chained roster;
+    readers advance to `e+1` only on a validly-signed roster, so a crash before step 5 leaves the
+    vault observably at `e` (no half-rotated state). Keeping the roster epoch consistent with the
+    ADR-021.1 manifest `vault_epoch` under a mid-rotation crash is `[Validation Required]` (K.16).
+
+- **Changes vs. stays on an epoch rotation.**
+
+| Changes | Stays unchanged |
+|---|---|
+| Vault Key (`VK_e → VK_{e+1}`) | Existing ciphertext (old-epoch objects, never re-sealed) |
+| Current epoch counter | `.cook` source-of-truth files (ADR-002) |
+| Roster (new signed entry, revoked member dropped) | MUK / KEK of every remaining member |
+| DEKs for **new** writes (epoch-scoped, §F) | **object-id namespace key** — epoch-invariant (ADR-021.1 §I.2) |
+
+- **Passphrase / Secret-Key change (no rotation).** Re-derive MUK (new passphrase and/or Secret
+  Key) → re-derive KEK → re-wrap that member's **single** `wrapped_vault_key` entry. One wrap; the
+  Vault Key, epoch, roster membership, and all data are unchanged — this is the Decision's
+  "passphrase change re-wraps one key, no data re-encryption."
+- **Honest forward-only limit.** As §H states plainly, a revoked member who kept `VK_e` (or
+  old-epoch ciphertext already downloaded) can still decrypt everything that existed **at revocation
+  time**; rotation protects only post-revocation writes. Optional lazy/background re-encryption
+  (K.9) shrinks but cannot eliminate that window — the member already saw the plaintext. Separately,
+  because the object-id namespace key is epoch-invariant (§I.2), a revoked member who learned it can
+  keep enumerating `object_id`s — **metadata**, never content (cross-ref ADR-021.1 §G).
+
+### `FONDENC1` → `FONDENC2` migration algorithm
+
+*Concretizes [§I](#i-fondenc1--fondenc2-migration-one-time) — the one-time migration.*
+
+Runs **once**, on first `fond sync setup` / first hierarchy-backed encrypted export.
+
+```mermaid
+flowchart TD
+    A[Vault crypto state] --> B{FONDENC1 blob present and no migration marker?}
+    B -->|no, marker present| Z[No-op - already migrated]
+    B -->|yes| C[open_bundle with existing KeyMaterial]
+    C --> D[Generate Vault Key and epoch-0 roster, owner-wrapped]
+    D --> E[Split OverlayBundle into per-object plaintext units]
+    E --> F[Seal each unit as a FONDENC2 object at epoch 0]
+    F --> G[Write to temp, fsync, atomic rename]
+    G --> H[Write migration marker]
+    H --> I[Retain or securely delete FONDENC1 blob]
+    I --> J[Done - FONDENC2 authoritative]
+```
+
+1. **Detect (idempotency guard).** Inspect the vault crypto state: a `FONDENC1` blob (magic
+   `b"FONDENC1"`) with **no** migration marker ⇒ migrate; a marker / an epoch-0 roster with
+   `FONDENC2` objects already present ⇒ **no-op**, return success; both present (crash between commit
+   and marker) ⇒ verify/resume, never restart destructively.
+2. **Open legacy.** Decrypt the single `FONDENC1` bundle with the existing `KeyMaterial` (keychain
+   raw key `MODE_KEYCHAIN`, or passphrase `MODE_PASSPHRASE`) via `open_bundle` — the only place
+   legacy Argon2 params are read, and only for the user's **own local** blob (never a server-supplied
+   one).
+3. **Bootstrap hierarchy.** Generate the random 32-byte Vault Key; derive the owner's MUK/KEK (§C,
+   under a chosen `kdf_profile_id`); create the **epoch-0** roster with the owner's
+   `wrapped_vault_key[0]` entry (§G), signed by the owner Ed25519 key.
+4. **Split.** Partition the decrypted `OverlayBundle` into per-object plaintext units at the chosen
+   granularity (§F / A0.2; the final granularity is open, K.6). Photos are already per-file.
+5. **Seal.** For each unit, derive its DEK from `VK_0` (§F) and seal it as a `FONDENC2` object (§E)
+   at **epoch 0**.
+6. **Commit atomically (crash-safe).** Write all new objects + the epoch-0 roster into a
+   **temporary** staging location; `fsync`; then **atomically rename** into place. Only after the
+   rename succeeds, write the migration marker. The live vault is never half-converted: either the
+   legacy blob is authoritative (pre-rename) or the `FONDENC2` set is (post-rename).
+7. **Dispose legacy.** Per user choice, **retain** the `FONDENC1` blob (default, safest) or
+   **securely delete** it. Secure-delete guarantees on SSD / copy-on-write filesystems are
+   `[Validation Required]` (K.15).
+
+Invariants:
+
+- **Idempotent.** Step 1 makes re-runs no-ops; a crash at any point leaves either a clean pre- or
+  post-migration state (step 6), so a re-run completes or no-ops, never corrupts.
+- **Lossless & edit-preserving.** Every overlay record maps to exactly one `FONDENC2` object;
+  existing user edits are never overwritten (import-idempotency house rule).
+- **`.cook` files untouched.** Migration re-frames only the derived overlay/photo blobs; the `.cook`
+  source of truth (ADR-002) is never read or written.
+- **Runs once.** Thereafter, transfers upload already-encrypted `FONDENC2` blobs with **no**
+  re-encryption — the point of the hierarchy.
+
+### New open questions & validation
+
+- **New open questions.** A0.3 appends four items to the FONDENC2
+  [§K](#k-open-questions-for-a05-independent-crypto-review) list (extending, never renumbering):
+  **K.13** profile figures & unlock/memory budget; **K.14** profile deprecation &
+  forced-upgrade-on-unlock; **K.15** legacy-blob disposition & secure-delete guarantees; **K.16**
+  cross-object rotation atomicity (roster ↔ ADR-021.1 manifest). Pre-existing questions this
+  appendix deliberately leaves open: **K.1** (MUK two-secret binding), **K.2** (Vault-Key wrap
+  construction), **K.6** (object granularity), **K.9** (lazy re-encryption), and ADR-021.1 **§I.2**
+  (object-id-key rotation-invariance).
+- **Not a re-spec of the core.** This appendix pins operational parameters and procedures only; the
+  cryptographic core (primitives, envelope, hierarchy) remains the FONDENC2 appendix's. The whole
+  stays a composition of reviewed primitives (Argon2id, HKDF, XChaCha20-Poly1305, Ed25519) — which
+  is exactly why the A0.5 independent review is mandatory before any implementation.
