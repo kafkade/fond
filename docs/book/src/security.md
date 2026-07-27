@@ -1,11 +1,17 @@
-# What fond protects (encryption at rest)
+# What fond protects
 
-fond is local-first: your data lives on your own disk. This page explains, plainly,
-**what is encrypted, what is not, and why** — so you can make an informed choice
-about syncing personal data across machines.
+fond is local-first: your data lives on your own disk. **Your first run creates no
+account and encrypts nothing** — fond encrypts only when you opt in, and optional
+**end-to-end encrypted sync** (planned) protects data *in transit and at rest on the
+remote*, never your local plaintext working copy. This page explains, plainly,
+**what is and isn't encrypted, and why** — so you can make an informed choice about
+syncing personal data across machines.
 
 For the full threat model and design rationale, see
-[ADR-019](https://github.com/kafkade/fond/blob/main/docs/adr/019-encryption-at-rest.md).
+[ADR-019](https://github.com/kafkade/fond/blob/main/docs/adr/019-encryption-at-rest.md)
+(overlay encryption at rest) and
+[ADR-020](https://github.com/kafkade/fond/blob/main/docs/adr/020-zero-knowledge-identity.md)
+(the account model and two-secret sync design).
 
 ## The short version
 
@@ -19,6 +25,41 @@ For the full threat model and design rationale, see
 fond delegates baseline at-rest protection to your operating system, and adds
 **opt-in** encryption for the one surface that is *designed to leave your machine*:
 the authored-overlay sidecar.
+
+## What is and isn't encrypted
+
+Be clear-eyed about what lives in plaintext. Today, **everything fond works with on
+your device is plaintext** — protected only by your OS full-disk encryption (below):
+
+- `.cook` recipe files — plaintext by design; you own them and can read them forever.
+- `fond.db` — the SQLite index and overlay (ratings, notes, pantry, meal plans, cook logs).
+- The **FTS5 full-text search index** inside `fond.db`.
+- SQLite's **write-ahead log and shared-memory** sidecars (`fond.db-wal`, `fond.db-shm`).
+- **Temporary files** written during import, export, and reindex.
+- **In-memory** working data while fond is running.
+- Photo **EXIF metadata** (camera, timestamps, and any embedded GPS location).
+- Generated **thumbnails**.
+
+None of these is encrypted by fond itself. When app-level encryption ships, it protects
+the data that **leaves** your machine — **end-to-end during sync and at rest on the
+remote** — **not** your local working copy. Locally, your defense is OS full-disk
+encryption plus basic device hygiene (see below). The one exception you can turn on
+today is the authored-overlay *sidecar* you export for syncing, covered further down.
+
+## If you lose a secret
+
+When optional encrypted sync ships, it will use a **two-secret model**
+([ADR-020](https://github.com/kafkade/fond/blob/main/docs/adr/020-zero-knowledge-identity.md)),
+like 1Password: a **passphrase** you choose plus a device-generated **Secret Key**.
+Both are required to unlock your encrypted vault, and **losing *either* one loses the
+encrypted vault** — there is no backdoor and no operator who can reset it for you.
+
+The only backstop is ownership: the plaintext `.cook` files still present on a
+surviving device. That recovers **recipes that still exist on that device — and
+nothing else.** It does **not** recover your photos, your authored overlay (notes,
+ratings, cook logs, pantry, meal plans), or anything that lived **only** in a lost
+encrypted remote. Keep the Secret Key somewhere safe (a printed Emergency Kit) and
+prove a restore actually works before you rely on it.
 
 ## Baseline: turn on OS full-disk encryption
 
