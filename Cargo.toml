@@ -46,6 +46,7 @@ refinery = { version = "0.9", features = ["rusqlite"] }
 chacha20poly1305 = "0.11"
 argon2 = "0.5"
 zeroize = "1"
+blake3 = "1"
 rpassword = "7"
 tempfile = "3"
 clap_complete = "4"

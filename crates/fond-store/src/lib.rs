@@ -4,6 +4,7 @@
 //! are the source of truth, and `fond reindex` rebuilds the DB
 //! from those files. The database is disposable; the files are sacred.
 
+pub mod backup;
 mod cook_log;
 pub mod crypto;
 mod db;

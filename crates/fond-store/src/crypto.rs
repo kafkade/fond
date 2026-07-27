@@ -290,6 +290,164 @@ pub fn open_bundle(bytes: &[u8], key: &KeyMaterial) -> Result<OverlayBundle, Cry
     Ok(bundle)
 }
 
+/// Seal an arbitrary byte payload into a self-authenticating **crypto blob**.
+///
+/// Unlike [`seal_bundle`] (which owns the whole `FONDENC1` envelope for an
+/// [`OverlayBundle`]), this is a *format-agnostic* primitive: it emits only the
+/// key-mode sub-header (`key_mode`, KDF parameters, nonce) followed by the AEAD
+/// ciphertext, with **no magic and no version of its own**. The caller composes
+/// its own outer header and passes it as `aad`, so any tampering with either the
+/// caller's header or this sub-header breaks the open (fail closed).
+///
+/// The AEAD associated data is `aad || sub_header`, binding the ciphertext to
+/// both the caller's framing and this blob's own key parameters.
+///
+/// Used by the [`crate::backup`] archive format (`FONDBKP1`) to encrypt a
+/// multi-file payload while keeping all cryptography in one audited place.
+pub fn seal_blob(plaintext: &[u8], aad: &[u8], key: &KeyMaterial) -> Result<Vec<u8>, CryptoError> {
+    let mut sub_header: Vec<u8> = Vec::with_capacity(64);
+
+    let mut derived: [u8; KEY_LEN] = match key {
+        KeyMaterial::Raw(k) => {
+            sub_header.push(MODE_KEYCHAIN);
+            *k
+        }
+        KeyMaterial::Passphrase(passphrase) => {
+            sub_header.push(MODE_PASSPHRASE);
+            let salt: [u8; SALT_LEN] =
+                <[u8; SALT_LEN]>::try_generate().map_err(|e| CryptoError::Rng(e.to_string()))?;
+            let params = Params::default();
+            sub_header.extend_from_slice(&salt);
+            sub_header.extend_from_slice(&params.m_cost().to_le_bytes());
+            sub_header.extend_from_slice(&params.t_cost().to_le_bytes());
+            sub_header.extend_from_slice(&params.p_cost().to_le_bytes());
+            derive_key(passphrase, &salt, &params)?
+        }
+    };
+
+    let nonce_bytes: [u8; NONCE_LEN] =
+        <[u8; NONCE_LEN]>::try_generate().map_err(|e| CryptoError::Rng(e.to_string()))?;
+    sub_header.extend_from_slice(&nonce_bytes);
+
+    let cipher = XChaCha20Poly1305::new_from_slice(&derived)
+        .map_err(|_| CryptoError::Kdf("invalid key length".into()))?;
+    derived.zeroize();
+
+    let mut full_aad = Vec::with_capacity(aad.len() + sub_header.len());
+    full_aad.extend_from_slice(aad);
+    full_aad.extend_from_slice(&sub_header);
+
+    let nonce = XNonce::from(nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad: &full_aad,
+            },
+        )
+        .map_err(|_| CryptoError::Decrypt)?;
+
+    let mut out = sub_header;
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Open a crypto blob produced by [`seal_blob`], returning the plaintext.
+///
+/// `aad` must be the exact same caller framing that was supplied to
+/// [`seal_blob`]. Fails closed on a missing/wrong key, a key-mode mismatch, or
+/// any tampering of the caller header, the sub-header, or the ciphertext.
+pub fn open_blob(bytes: &[u8], aad: &[u8], key: &KeyMaterial) -> Result<Vec<u8>, CryptoError> {
+    let mut pos = 0usize;
+    let mode_byte = *bytes
+        .get(pos)
+        .ok_or_else(|| CryptoError::Malformed("truncated blob (key mode)".into()))?;
+    pos += 1;
+
+    let (mode, kdf) = match mode_byte {
+        MODE_KEYCHAIN => (KeyMode::Keychain, None),
+        MODE_PASSPHRASE => {
+            let salt = take_array::<SALT_LEN>(bytes, &mut pos, "salt")?;
+            let m_cost = take_u32(bytes, &mut pos, "m_cost")?;
+            let t_cost = take_u32(bytes, &mut pos, "t_cost")?;
+            let p_cost = take_u32(bytes, &mut pos, "p_cost")?;
+            (
+                KeyMode::Passphrase,
+                Some(KdfHeader {
+                    salt,
+                    m_cost,
+                    t_cost,
+                    p_cost,
+                }),
+            )
+        }
+        other => {
+            return Err(CryptoError::Malformed(format!(
+                "unknown key mode byte {other}"
+            )));
+        }
+    };
+
+    let nonce_bytes = take_array::<NONCE_LEN>(bytes, &mut pos, "nonce")?;
+    let sub_header = &bytes[..pos];
+    let ciphertext = &bytes[pos..];
+
+    let mut derived: [u8; KEY_LEN] = match (mode, key) {
+        (KeyMode::Keychain, KeyMaterial::Raw(k)) => *k,
+        (KeyMode::Passphrase, KeyMaterial::Passphrase(passphrase)) => {
+            let kdf = kdf.as_ref().ok_or_else(|| {
+                CryptoError::Malformed("passphrase blob missing KDF parameters".into())
+            })?;
+            let params = Params::new(kdf.m_cost, kdf.t_cost, kdf.p_cost, Some(KEY_LEN))
+                .map_err(|e| CryptoError::Kdf(e.to_string()))?;
+            derive_key(passphrase, &kdf.salt, &params)?
+        }
+        (expected, provided) => {
+            return Err(CryptoError::KeyModeMismatch {
+                expected: expected.label(),
+                provided: provided.provided_label(),
+            });
+        }
+    };
+
+    let cipher = XChaCha20Poly1305::new_from_slice(&derived)
+        .map_err(|_| CryptoError::Kdf("invalid key length".into()))?;
+    derived.zeroize();
+
+    let mut full_aad = Vec::with_capacity(aad.len() + sub_header.len());
+    full_aad.extend_from_slice(aad);
+    full_aad.extend_from_slice(sub_header);
+
+    let nonce = XNonce::from(nonce_bytes);
+    let plaintext = cipher
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext,
+                aad: &full_aad,
+            },
+        )
+        .map_err(|_| CryptoError::Decrypt)?;
+
+    Ok(plaintext)
+}
+
+/// Read the key mode of a crypto blob without needing the key.
+///
+/// Lets a caller decide whether to fetch a keychain key or prompt for a
+/// passphrase before it holds any secret material.
+pub fn peek_blob_key_mode(bytes: &[u8]) -> Result<KeyMode, CryptoError> {
+    match bytes.first() {
+        Some(&MODE_KEYCHAIN) => Ok(KeyMode::Keychain),
+        Some(&MODE_PASSPHRASE) => Ok(KeyMode::Passphrase),
+        Some(&other) => Err(CryptoError::Malformed(format!(
+            "unknown key mode byte {other}"
+        ))),
+        None => Err(CryptoError::Malformed("empty sealed blob".into())),
+    }
+}
+
 /// Argon2id parameters recovered from a passphrase envelope header.
 struct KdfHeader {
     salt: [u8; SALT_LEN],
@@ -528,5 +686,41 @@ mod tests {
             err,
             CryptoError::Malformed(_) | CryptoError::Decrypt
         ));
+    }
+
+    #[test]
+    fn seal_blob_raw_round_trip() {
+        let key = KeyMaterial::Raw(generate_key().unwrap());
+        let aad = b"outer-header";
+        let sealed = seal_blob(b"arbitrary payload", aad, &key).unwrap();
+        assert_eq!(peek_blob_key_mode(&sealed).unwrap(), KeyMode::Keychain);
+        let opened = open_blob(&sealed, aad, &key).unwrap();
+        assert_eq!(opened, b"arbitrary payload");
+    }
+
+    #[test]
+    fn seal_blob_passphrase_round_trip() {
+        let aad = b"outer-header";
+        let sealed = seal_blob(b"secret", aad, &KeyMaterial::Passphrase("pw".into())).unwrap();
+        assert_eq!(peek_blob_key_mode(&sealed).unwrap(), KeyMode::Passphrase);
+        let opened = open_blob(&sealed, aad, &KeyMaterial::Passphrase("pw".into())).unwrap();
+        assert_eq!(opened, b"secret");
+    }
+
+    #[test]
+    fn seal_blob_aad_mismatch_fails_closed() {
+        // The caller framing is authenticated: opening with different AAD fails.
+        let key = KeyMaterial::Raw(generate_key().unwrap());
+        let sealed = seal_blob(b"payload", b"header-A", &key).unwrap();
+        let err = open_blob(&sealed, b"header-B", &key).unwrap_err();
+        assert!(matches!(err, CryptoError::Decrypt));
+    }
+
+    #[test]
+    fn seal_blob_wrong_key_fails_closed() {
+        let sealed =
+            seal_blob(b"payload", b"h", &KeyMaterial::Raw(generate_key().unwrap())).unwrap();
+        let err = open_blob(&sealed, b"h", &KeyMaterial::Raw(generate_key().unwrap())).unwrap_err();
+        assert!(matches!(err, CryptoError::Decrypt));
     }
 }

@@ -98,3 +98,60 @@ ADR-019). A backup is worthless unless a **restore has actually been verified** 
 - **Device backup (ADR-023.1) ships in 1.1** with plaintext + integrity, no server and no key
   hierarchy; `--encrypt` and server backup (ADR-023.2) follow with ADR-020/`fond-server`.
 - No CI / `kafkade/github-infra` change from the client-side device backup alone (new deps only).
+
+## Appendix: `FONDBKP1` wire format (ADR-023.1)
+
+The device-backup archive is a self-describing binary format. The authoritative,
+byte-level specification lives as the module documentation of
+`crates/fond-store/src/backup.rs`; this appendix records the shape so the ADR is
+self-contained. The format is **not** `FONDENC1` (which only seals a single
+`OverlayBundle`).
+
+```text
+┌─ Header (cleartext; authenticated as AEAD AAD in encrypted mode) ─┐
+│ magic     "FONDBKP1"   8 bytes                                    │
+│ version   u8           1  (currently 1)                           │
+│ mode      u8           0 = plaintext, 1 = encrypted               │
+│ anchor    u8           0 = blake3-integrity,                      │
+│                        1 = xchacha20poly1305-aead                 │
+│                        (2 = ed25519 signature — reserved, ADR-020)│
+├─ Payload ─────────────────────────────────────────────────────────┤
+│ plaintext mode: payload verbatim                                  │
+│ encrypted mode: crypto::seal_blob(payload, aad = header)          │
+│                 (XChaCha20-Poly1305; key_mode + KDF params +      │
+│                  nonce prefix, then ciphertext)                    │
+│                                                                   │
+│ payload = manifest_len (u32 LE)                                   │
+│         ‖ manifest_json (UTF-8)                                   │
+│         ‖ body (raw file bytes, concatenated in manifest order)   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+- **Manifest** — JSON: `{ format, version, created_at, tool_version, entries,
+  archive_root }`. Each entry is `{ path, kind, size, blake3 }`, where `path` is a
+  `/`-separated data-dir-relative path, `kind` ∈ `recipe|photo|overlay|other`,
+  `size` is the byte length, and `blake3` is the hex BLAKE3-256 of the file's
+  bytes. Entries are sorted by path and de-duplicated.
+- **Archive root** — hex BLAKE3-256 over the canonical serialization of the sorted
+  entries (`path \0 kind \0 size_le \0 blake3 \n` per entry). One value anchoring
+  the whole manifest.
+- **Named trust anchor** — recorded explicitly in the `anchor` header byte:
+  - `blake3-integrity` (plaintext): the unkeyed archive root. Verify/extract need
+    **no key**. Honest limit: detects corruption and accidental tampering, not a
+    forging adversary who controls the archive — use `--encrypt` on untrusted
+    media.
+  - `xchacha20poly1305-aead` (encrypted): the Poly1305 tag keyed by the
+    keychain/passphrase key (the ADR-020 Vault Key later). The cleartext header is
+    bound in as AEAD associated data.
+  - `ed25519` (reserved): a future detached signature over the archive root once
+    the ADR-020 device signing key exists — a non-breaking addition.
+- **Verification is fail-closed** — the anchor is checked first (AEAD open in
+  encrypted mode), then every per-file hash is recomputed from the body and the
+  archive root is recomputed from the manifest. Any byte flip, reorder, missing
+  file, wrong key, or truncation errors out. Restore verifies the whole archive
+  before writing any file and rejects unsafe paths (absolute or `..`).
+- **Restore** reconstructs the `.cook`/photo/overlay files losslessly, then the
+  caller runs `fond reindex` to rebuild the disposable `fond.db`. The database is
+  never stored in the archive. The authored overlay lives in `fond.db` and is
+  captured only as `overlay/` sidecars, so a backup must export the overlay first
+  (the `fond backup` CLI's responsibility, #113).
