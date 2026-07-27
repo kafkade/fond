@@ -82,7 +82,9 @@ access** to content.
   authorization, quotas, rate limits, and audit logs are first-class.
 - **Per-user / household libraries:** each household has an isolated encrypted-blob namespace with
   per-member OPAQUE accounts (ADR-020's multi-member vault). Every object access is authorization-
-  checked against the requesting member (no IDOR). Admin onboarding uses a **bootstrap token**.
+  checked against the requesting member (no IDOR). Admin onboarding uses a **bootstrap token**. See
+  [Appendix ADR-021.2](#appendix-account-authentication--pake-selection-adr-0212) for the PAKE
+  selection and the auth-vs-vault-authorization boundary.
 
 ### Sync protocol (client-driven, zero-knowledge)
 
@@ -141,7 +143,7 @@ access** to content.
 |---|---|
 | Keep ADR-012's "no server" absolutely | Leaves a real always-on/NAT gap; an *optional*, demand-gated ZK server doesn't violate local-first. But "don't build it" remains the correct outcome if E1 shows no demand. |
 | Reuse `fond serve` (Phase 4) as the sync server | Different trust model (public multi-user vs local single-user); risks exposing a local UI to the internet. |
-| SRP-6a for accounts | A stolen verifier enables offline guessing; OPAQUE (RFC 9807) preferred, SRP a reviewed fallback only. |
+| SRP-6a for accounts | A stolen verifier enables offline guessing; OPAQUE (RFC 9807) preferred, SRP a reviewed fallback only. See [Appendix ADR-021.2 §B](#b-why-opaque-rfc-9807-not-srp-6a). |
 | Whole-recipe last-writer-wins merge | Silent data loss on concurrent edits; sibling-retaining three-way merge required instead. |
 | Server-side plaintext with "optional" encryption | Violates the zero-knowledge requirement and ADR-019; makes any hosted offering a liability. |
 | Server performs the merge | Impossible under zero-knowledge (can't read bodies); merge must be client-side. |
@@ -481,3 +483,323 @@ rename). Until A4 lands this appendix is unimplementable, consistent with the A0
 8. **Equivocation response** — hard-fail vs. warn-and-quarantine. (§E)
 9. **Tombstone reap predicate** — dominance across which device set; interaction with
    permanently-offline devices. (§F)
+10. **OPAQUE crate & version pin** — `opaque-ke` (facebook/novi, RFC 9807) at a pinned version vs.
+    any alternative; confirm the cited third-party review actually covers that release. `[Validation
+    Required]` (ADR-021.2 §C).
+11. **OPAQUE ciphersuite & KSF binding** — OPRF group, hash/KDF/MAC, and AKE choice, and binding the
+    OPAQUE key-stretching function to the **A0.3 Argon2id profile registry** so the vault has one
+    Argon2 regime, not two. `[Validation Required]` (ADR-021.2 §F).
+12. **Identity ↔ OPAQUE binding construction** — envelope-embedded (OPAQUE `client_identity` /
+    `export_key`-encrypted client state) vs. a sidecar Ed25519 self-signed attribute, for committing
+    the vault identity public keys to the account. Resolves **ADR-020 K.10** in principle; the
+    construction is the residual. `[Validation Required]` (ADR-021.2 §E).
+13. **Non-resettable-attribute invariant** — how the server guarantees a login/password **reset**
+    replaces the OPAQUE record but **never** rewrites the bound vault identity public key, plus the
+    reset authority and flow. `[Validation Required]` (ADR-021.2 §D, §E).
+14. **Vault-authorization signature format** — the exact Ed25519 signature (message canonicalization,
+    a `fond/fondenc2/v2/...` domain-separation label, and which roster key signs) required on every
+    destructive / key-material op, and the server's verification obligation. `[Validation Required]`
+    (ADR-021.2 §D).
+15. **SRP-6a fallback conditions** — the precise circumstances (if any) under which the reviewed
+    SRP-6a fallback engages, confirming it is never the default and never hand-rolled. `[Validation
+    Required]` (ADR-021.2 §B, §C).
+16. **Passphrase two-use domain separation** — the same passphrase feeds the OPAQUE login KSF and the
+    MUK Argon2id (A0.3 / ADR-020 §C); pin how they are domain-separated (distinct
+    `fond/fondenc2/v2/...` labels vs. the structural OPRF-secret / Secret-Key-pepper / distinct-salt
+    argument) so neither derivation's output aids attacking the other, and confirm that reusing the
+    A0.3 profile registry shares parameters only, never a derived value. `[Validation Required]`
+    (ADR-021.2 §F).
+
+## Appendix: account authentication — PAKE selection (ADR-021.2)
+
+This appendix concretizes the **account-authentication** primitive that ADR-021's Decision (the
+[`fond-server` crate](#fond-server-crate-distinct-from-fond-serve) and its per-user **OPAQUE /
+RFC 9807** accounts) names but does not construct, and draws the line between *authenticating to the
+service* and *authorizing changes to the vault*. It **references** rather than restates: the vault
+key hierarchy lives in
+[ADR-020's FONDENC2 appendix](020-zero-knowledge-identity.md#appendix-fondenc2-protocol), the
+Argon2id key-stretching profiles in its
+[A0.3 appendix](020-zero-knowledge-identity.md#appendix-kdf-profiles-rotation--migration-a03), the
+member roster and Ed25519 signing keys in
+[§G](020-zero-knowledge-identity.md#g-per-member-vault-key-wrapping--the-roster) /
+[§H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation), and the
+signed causal history in the
+[ADR-021.1 appendix](#appendix-authenticated-causal-history-adr-0211) above. It reuses their exact
+vocabulary (MUK, Vault Key, member KEK, epoch, roster, `wrapped_vault_key`, Ed25519 roster/manifest
+signatures, X25519, `fond/fondenc2/v2/...` labels) and **never hand-rolls a PAKE**.
+
+**Gate reminder:** this is a paper spec. **No auth/sync code lands before the Epic A0 independent
+review (A0.5) clears.** Every `[Validation Required]` tag marks a choice the A0.5 reviewer must sign
+off on; unresolved choices are appended to the ADR-021.1
+[§I](#i-open-questions-for-a05-independent-review) list (as I.10–I.16) rather than decided here. Per
+the honesty rule of this spike, **no crate is "audited/validated" *for fond* until A0.5 signs off** —
+a *prior* third-party review of a dependency is cited as evidence, never as validation of the
+selection.
+
+### Scope & pointer map
+
+| This appendix subsection | Concretizes | Acceptance criterion (#119) |
+|---|---|---|
+| A. Threat model for account authentication | ADR-021 [Threat model](#threat-model); ADR-020 [Threat model](020-zero-knowledge-identity.md#threat-model) | #4 |
+| B. Why OPAQUE (RFC 9807), not SRP-6a | ADR-021 Alternatives `SRP-6a for accounts`; ADR-020 Alternatives `SRP-6a as the primary PAKE` | #2 |
+| C. Rust crate evaluation & selection | ADR-021 Decision (per-user OPAQUE accounts); ADR-020 [§J primitives](020-zero-knowledge-identity.md#j-primitives) | #1 |
+| D. Service authentication vs. vault authorization | ADR-020 [§G](020-zero-knowledge-identity.md#g-per-member-vault-key-wrapping--the-roster) / [§H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation) roster & Ed25519 | #3 |
+| E. Binding vault identity keys to the OPAQUE record | ADR-020 [K.10](020-zero-knowledge-identity.md#k-open-questions-for-a05-independent-crypto-review) | #3 |
+| F. Chosen ciphersuite, parameters & A0.5 sign-off | ADR-020 [§J primitives](020-zero-knowledge-identity.md#j-primitives); A0.3 Argon2id registry | #4 |
+
+It does **not** redefine the vault key hierarchy, the per-object envelope, DEK derivation, or the
+roster — those remain authoritative in ADR-020 and are only cited.
+
+### A. Threat model for account authentication
+
+The adversary is ADR-021's **curious or breached server operator** (self-host neighbor, cloud host,
+or kafkade), now aimed specifically at the login layer. Account authentication must survive:
+
+- **Server-storage compromise.** A full dump of the server DB (Postgres OPAQUE records + object
+  store) must yield **no offline-guessable password verifier** and **no ability to forge vault
+  authorization** (§D). This is the property SRP-6a fails and OPAQUE is chosen for (§B).
+- **Pre-computation.** An attacker must not be able to build a dictionary / rainbow table *before*
+  compromise that is then instantly usable *after* it. OPAQUE's oblivious PRF ties password hardening
+  to a **server-side OPRF secret**, so no pre-computed table applies until that secret is also stolen
+  — and even then each guess still pays the key-stretching cost (§F).
+- **Online guessing.** The server (the service-auth layer) rate-limits and audit-logs OPAQUE login
+  attempts (ADR-021 multi-tenant threats); this is the one place an interactive guess is possible,
+  and it is bounded by policy, not cryptography.
+- **Passive transit / MITM.** OPAQUE never transmits the password or a password-equivalent; the
+  blinded OPRF evaluation and the AKE transcript reveal nothing offline-usable to a network or server
+  observer.
+
+**The OPRF's role.** On every login the client *blinds* its password, the server evaluates the OPRF
+under its secret, and the client unblinds — the server learns nothing about the password and the
+client obtains a value it could not have pre-computed. This is what removes the pre-computation
+advantage that plain salted-hash and SRP verifiers retain.
+
+**Where the two-secret model backstops this (cross-ref ADR-020).** Even a *worst-case* full server
+compromise that also recovers the OPRF secret and mounts a key-stretch-bounded offline dictionary
+attack against a weak passphrase only yields the **account credential** — i.e. *service access*. It
+does **not** yield the Vault Key: unwrapping requires the **MUK = Argon2id(passphrase, secret =
+Secret Key, …)** and the **Secret Key never leaves the device** (ADR-020 two-secret model). Nor does
+it yield **vault authorization**, which requires an Ed25519 vault identity key the server never holds
+(§D). The auth/authorization separation is therefore not merely policy — it is what caps the blast
+radius of a server breach.
+
+### B. Why OPAQUE (RFC 9807), not SRP-6a
+
+Both are password-authenticated key exchanges that avoid sending the password to the server. The
+decisive difference is **what a stolen server record lets an attacker do offline**.
+
+- **SRP-6a (RustCrypto `srp`).** The server stores a **verifier** `v = g^x mod N` with
+  `x = H(salt, identity, password)`. A single server-storage compromise leaks `v`, after which the
+  attacker mounts an **offline dictionary attack**: for each candidate password compute `x`, then
+  `g^x mod N`, and compare to `v` — a cheap modular exponentiation per guess, fully offline, with no
+  further interaction with anyone. The verifier is, by construction, an **offline-guessable
+  artifact**. SRP-6a also carries older-design baggage (fixed groups, no formal aPAKE
+  pre-computation resistance, well-known implementation footguns).
+- **OPAQUE (RFC 9807, an aPAKE with an oblivious PRF).** The server stores a per-user **envelope**
+  plus OPRF / AKE key material, **not** a password verifier. The password is hardened through the
+  OPRF (keyed by a server secret) *and* a key-stretching function (KSF, §F). A server-storage
+  compromise **alone** yields **no artifact against which an offline dictionary attack can be run** —
+  the OPRF secret is required even to *begin* guessing, and OPAQUE is designed to be
+  **pre-computation resistant** so tables built before compromise do not apply. A full compromise
+  (records **and** the OPRF secret) degrades only to a **KSF-bounded** offline attack — strictly
+  costlier per guess than SRP's cheap verifier attack, and, for fond, still capped by the two-secret
+  / vault-authorization separation (§A, §D).
+
+**Decision.** OPAQUE (RFC 9807) is the **primary** aPAKE; **SRP-6a is retained only as a reviewed
+fallback** — never the default, never hand-rolled — for an environment where a maintained OPAQUE
+implementation is genuinely unavailable. The conditions under which the fallback would ever engage
+are an open question (§G, I.15). Any claim that either option is "audited" or "validated" *for fond*
+is downgraded to `[Validation Required]` pending A0.5 (§C).
+
+### C. Rust crate evaluation & selection
+
+**Recommended: `opaque-ke` (facebook/novi) as the OPAQUE implementation, with RustCrypto `srp` as the
+reviewed SRP-6a fallback.** Every maintenance/audit statement below is *evidence for A0.5*, not a
+validation — the *selection* is `[Validation Required]` until A0.5 signs off, and **fond never
+hand-rolls a PAKE**.
+
+| Crate | Role | Maintenance / provenance | Audit provenance | RFC conformance | Dependency footprint |
+|---|---|---|---|---|---|
+| `opaque-ke` | OPAQUE aPAKE (primary) | Facebook/novi; the reference-grade Rust OPAQUE, tracking the CFRG work that became RFC 9807 | Reports a **prior third-party cryptographic review** — A0.5 MUST locate it, cite it, and confirm it covers the pinned release `[Validation Required]` | Implements OPAQUE-3DH per RFC 9807; upstream test vectors published `[Validation Required]` | Elliptic-curve group (ristretto255 / P-256), its `voprf` OPRF dependency, plus KSF / `hkdf` / `hmac` / `sha2` / `rand` / `zeroize` — larger, justified by aPAKE properties |
+| `voprf` | Oblivious PRF (transitive dep of `opaque-ke`) | Facebook/novi; the OPRF `opaque-ke` builds on, tracking RFC 9497 | Reviewed alongside the OPAQUE work `[Validation Required]` | RFC 9497 VOPRF `[Validation Required]` | RustCrypto curve + hash primitives |
+| `srp` (RustCrypto) | SRP-6a (fallback only) | RustCrypto `PAKEs`; smaller, widely used | No dedicated aPAKE audit assumed; treat as unaudited for this purpose `[Validation Required]` | SRP-6a (RFC 2945 family), **not** an aPAKE | Minimal (`num-bigint-dig`, `digest`, `sha2`) |
+
+Rationale for `opaque-ke`:
+
+- **It is the audited-lineage RFC 9807 implementation in Rust**, built by the group that authored much
+  of the OPAQUE / VOPRF standards work, so an RFC-conformance and review trail *exists to cite* —
+  subject to A0.5 confirming both against the exact pinned version (`[Validation Required]`, §G I.10).
+- **It composes cleanly with the rest of FONDENC2:** its KSF slot accepts **Argon2id**, letting us
+  bind account key-stretching to the **A0.3 Argon2id profile registry** rather than introducing a
+  second Argon2 regime (§F).
+- **The larger dependency footprint is the price of an aPAKE** and is acceptable given the
+  server-compromise properties (§B); the `srp` fallback stays available for constrained builds.
+
+**Explicit non-goal.** Neither OPAQUE nor SRP is implemented by hand. If no maintained, reviewable
+OPAQUE crate is acceptable at implementation time, the fallback is the maintained RustCrypto `srp`
+crate under the §B caveats — **never** a bespoke construction.
+
+### D. Service authentication vs. vault authorization
+
+The core of this spike: **two distinct layers**, so that resetting the one the server can touch never
+grants the powers only a vault key confers.
+
+**Layer 1 — service authentication (resettable; the server participates).** OPAQUE login proves you
+may *talk to* the account: open a session, list / upload / download **ciphertext** blobs, read the
+signed manifest (ADR-021.1). This layer is **resettable** — a forgotten passphrase can be recovered
+by re-registering an OPAQUE record (a password reset), and an admin / bootstrap action can restore
+account *access*. The server is a full participant: it holds the OPAQUE record and enforces
+per-tenant authorization, quotas, and rate limits (ADR-021 threat model). Crucially, everything this
+layer authorizes operates on **opaque ciphertext** — it never decrypts content and never mutates the
+vault's trust state.
+
+**Layer 2 — vault authorization (non-resettable; the server cannot forge it).** Any **destructive or
+key-material** operation MUST carry an **Ed25519 signature from a vault identity key the server never
+holds and cannot forge** (ADR-020 §G / §H roster signing keys). These operations include:
+
+- deleting or overwriting encrypted blobs (beyond append / tombstone, ADR-021.1 §F);
+- publishing a new **roster** or bumping the **epoch** (revocation / rotation, ADR-020 §H);
+- **enrolling or revoking** a member (roster membership change).
+
+Because roles are **cryptographic, not server-enforced** (ADR-020 §H), the server can *store and
+relay* these signed objects but can neither author nor alter them: a client rejects any roster or
+destructive action not carrying a valid owner/admin Ed25519 signature chaining from known roster
+state.
+
+**The invariant that falls out of the separation.** A **login-layer reset restores account access but
+can NEVER authorize vault destruction or membership change.** Concretely: a password reset replaces
+the OPAQUE record (Layer 1); it does **not** — and cannot — reconstruct the member's **Secret Key**
+(never uploaded, ADR-020) or their **Ed25519 vault identity key** (Layer 2). So a reset actor can log
+back in and read ciphertext, but cannot unwrap the Vault Key, cannot sign a new roster, and cannot
+delete or rewrite vault state. An attacker who fully compromises the *service* layer is likewise
+capped: no forged vault authorization, by construction. The server's obligation to ensure a reset
+**never** rewrites the bound vault identity key is the non-resettable-attribute invariant of §E
+(open: §G I.13).
+
+**Account recovery ≠ data recovery (the honest flip-side).** A server-side login reset — or an admin
+/ bootstrap action — restores **account access only**. It does **not** recover vault *data*:
+decryption still requires the **passphrase + Secret Key** (Emergency Kit;
+[ADR-020 two-secret model](020-zero-knowledge-identity.md#the-local-keyset-two-secret-model)), and
+the reset layer possesses neither. This is *precisely why* a resettable login cannot authorize vault
+destruction — the layer that can be reset never holds the material (Secret Key, Ed25519 vault key)
+that decryption or signing would require. A member who loses the Secret Key does **not** regain their
+encrypted data by resetting the password; account recovery and data recovery are distinct events with
+distinct prerequisites
+([ADR-020 "Emergency Kit & recovery"](020-zero-knowledge-identity.md#emergency-kit--recovery)).
+
+### E. Binding vault identity keys to the OPAQUE record (resolves K.10)
+
+ADR-020 **K.10** asks how the X25519 / Ed25519 vault identity keys bind to the OPAQUE login record so
+a login-layer reset cannot forge vault authorization. This spike **resolves it in principle**; the
+exact construction is the only residual (§G I.12).
+
+**Resolution.** At account registration the client commits the member's **vault identity public keys**
+(Ed25519 signing, X25519 transport — ADR-020 §G) to the account, and the server stores that
+commitment as an **authenticated, non-resettable attribute** kept **distinct from the resettable
+OPAQUE password record**:
+
+- **Resettable record** = the OPAQUE registration record (envelope + OPRF / AKE material). A password
+  reset **replaces** this.
+- **Non-resettable attribute** = the committed vault identity public key(s), bound at first
+  registration and immutable except via an **Ed25519 vault-key-signed rotation** (never via a
+  password reset, never by the server).
+
+The server MUST enforce that replacing the resettable record **never** rewrites the non-resettable
+attribute (§G I.13). This is what makes §D's invariant hold end-to-end: a reset restores Layer-1
+access but leaves the Layer-2 identity commitment — and therefore vault authorization — untouched.
+
+**Construction options (`[Validation Required]`, §G I.12).** Two viable bindings, to be chosen at
+A0.5:
+
+1. **Envelope-embedded.** Carry the vault identity public key inside OPAQUE's authenticated
+   `client_identity` / `cleartext_credentials`, and/or encrypt a client-authored binding record under
+   OPAQUE's per-user **`export_key`** so it is recoverable only by the legitimate client. The binding
+   then rides the OPAQUE record itself.
+2. **Sidecar self-signed attribute.** Store the vault identity public key as a separate server
+   attribute accompanied by an **Ed25519 self-signature** over
+   `account_id ‖ vault_identity_pubkey ‖ registration_context` under a `fond/fondenc2/v2/...`
+   domain-separation label. The signature (which the server cannot produce) authenticates the
+   attribute; the server treats it as append-only.
+
+Option 2 keeps the non-resettable attribute cleanly separable from the resettable OPAQUE record (a
+natural fit for §D's reset invariant); option 1 couples them more tightly but leans on OPAQUE's own
+authenticated fields. The message canonicalization and label for both the binding self-signature and
+the per-operation authorization signature (§D) are `[Validation Required]` (§G I.14).
+
+### F. Chosen ciphersuite, parameters & A0.5 sign-off
+
+All figures below are **placeholders**, every one `[Validation Required]` at A0.5 (§G I.11); they
+exist to anchor the review, not to decide it.
+
+**OPAQUE ciphersuite (RFC 9807 / `opaque-ke` configuration):**
+
+| Component | Placeholder | Note |
+|---|---|---|
+| AKE | OPAQUE-3DH | the RFC 9807 authenticated key exchange `[Validation Required]` |
+| OPRF group | ristretto255 (alt. P-256) | RFC 9497 VOPRF; group choice `[Validation Required]` |
+| Hash | SHA-512 | paired with ristretto255 per `opaque-ke` defaults `[Validation Required]` |
+| KDF / MAC | HKDF-SHA-512 / HMAC-SHA-512 | `[Validation Required]` |
+| **KSF (key-stretching)** | **Argon2id via the A0.3 profile registry** | bind to `PROFILE[kdf_profile_id]` so the vault keeps **one** Argon2 regime, not two `[Validation Required]` (§G I.11) |
+| Nonce / seed lengths | per RFC 9807 | `[Validation Required]` |
+
+**KSF binding (important).** The OPAQUE key-stretching function reuses the **A0.3 Argon2id profile
+registry**
+([ADR-020 A0.3 appendix](020-zero-knowledge-identity.md#appendix-kdf-profiles-rotation--migration-a03))
+rather than defining independent Argon2 parameters, so account login and MUK derivation share one
+pinned, budgeted, append-only parameter table. Whether the account KSF profile and the member's MUK
+profile are the *same* `kdf_profile_id` or two registry entries is `[Validation Required]`.
+
+**Passphrase used twice — domain-separated (`[Validation Required]`, §G I.16).** The *same* user
+passphrase feeds **two** derivations: the **OPAQUE login** (service auth) and the **MUK** Argon2id
+(vault unwrap; [ADR-020 §C](020-zero-knowledge-identity.md#c-domain-separation--the-two-secret-muk) /
+the A0.3 appendix). These MUST be **domain-separated** so the server-side OPAQUE record can never
+assist an attack on the MUK, and MUK material can never assist forging an OPAQUE login. Reusing the
+A0.3 Argon2id **profile registry** as OPAQUE's KSF shares only the *tuned parameter table*, **not**
+the derived value: the two stretches are **separate invocations over distinct inputs and salts** —
+OPAQUE's KSF runs over the **OPRF-transformed** password (keyed by the server's OPRF secret, and never
+mixing in the Secret Key), while the MUK runs over the **raw passphrase + Secret-Key pepper**
+(ADR-020 §C) under its own per-member salt and `fond/fondenc2/v2/...` label — so their outputs are
+independent by construction. Whether that independence is pinned via **distinct domain-separation
+labels** or rests on the **structural** OPRF-secret / Secret-Key-pepper / distinct-salt argument is
+`[Validation Required]` (§G I.16).
+
+**Threat-notes recap — what a FULL server compromise does and does not yield (for A0.5, from §A;
+every claim `[Validation Required]`).**
+
+- **(a) OPAQUE login records → no offline password guessing.** A dump of the OPAQUE records yields no
+  offline-guessable verifier (§B); pre-computation is resisted by the OPRF secret, and online guessing
+  is bounded by server rate-limits, not cryptography.
+- **(b) Exfiltrated `wrapped_vault_key` blobs + OPAQUE records → still no vault decryption.** The
+  **Secret Key is never on the server** (ADR-020 two-secret model), so even holding every wrap blob
+  and OPAQUE record the attacker cannot derive the **MUK** or unwrap the **Vault Key**; and without an
+  Ed25519 vault key it cannot forge vault authorization (§D). The blast radius of a breach is capped
+  by material the server never possesses.
+- **(c) But metadata still leaks — do not overclaim.** Blob counts, sizes, change timestamps, and
+  device ids remain visible to the server, and a revoked member can still enumerate opaque
+  `object_id`s (cross-ref [ADR-021.1 §G](#g-honest-limits--what-this-cannot-do) and the ADR-021
+  Threat model's documented residuals). Zero-knowledge covers **content**, not traffic analysis.
+
+**A0.5 sign-off checklist.** The independent reviewer must confirm: (1) the OPAQUE crate + pinned
+version and its cited audit scope (I.10); (2) the full ciphersuite and the KSF↔A0.3-registry binding
+(I.11); (3) the identity↔OPAQUE binding construction resolving K.10 (I.12); (4) the
+non-resettable-attribute server invariant and reset flow (I.13); (5) the per-operation Ed25519
+vault-authorization signature format (I.14); (6) the SRP-6a fallback conditions (I.15); (7) the
+passphrase two-use domain separation between the OPAQUE KSF and the MUK (I.16). **No auth/sync code
+lands until all seven clear.**
+
+### G. New open questions & validation
+
+- **New open questions.** A0.4 appends seven items to the ADR-021.1
+  [§I](#i-open-questions-for-a05-independent-review) list (extending, never renumbering): **I.10**
+  OPAQUE crate & version pin; **I.11** ciphersuite & KSF↔A0.3-registry binding; **I.12**
+  identity↔OPAQUE binding construction (resolves ADR-020 **K.10**); **I.13** non-resettable-attribute
+  server invariant; **I.14** vault-authorization signature format; **I.15** SRP-6a fallback
+  conditions; **I.16** passphrase two-use domain separation (OPAQUE KSF vs. MUK). ADR-020 **K.10** is
+  **advanced / resolved-in-principle** here (§E) and carries a one-line pointer back; its residual
+  construction is I.12.
+- **Not a re-spec of the vault.** This appendix decides the *account-authentication* primitive and the
+  auth-vs-authorization boundary only; the key hierarchy, envelope, roster, and causal history remain
+  authoritative in ADR-020 and the ADR-021.1 appendix. The whole stays a **composition of reviewed
+  primitives** (OPAQUE / RFC 9807, VOPRF / RFC 9497, Argon2id, Ed25519, X25519) with **nothing
+  hand-rolled** — which is exactly why the A0.5 independent review is mandatory before any
+  implementation.
