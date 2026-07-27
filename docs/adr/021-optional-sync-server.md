@@ -32,8 +32,10 @@ Real gaps file-sync (Syncthing/iCloud/Dropbox) leaves open:
 - No encrypted-at-rest custody on an untrusted always-on host.
 - No clean per-user account model for a future kafkade-hosted offering (ADR-022).
 
-ADR-020 provides the identity/keys; ADR-015 (revised) provides client-side merge semantics; ADR-019
-provides the crypto primitives. This ADR provides the optional hub.
+ADR-020 provides the identity/keys (see its
+[FONDENC2 protocol](020-zero-knowledge-identity.md#appendix-fondenc2-protocol) appendix for the
+vault key hierarchy these sync blobs consume); ADR-015 (revised) provides client-side merge
+semantics; ADR-019 provides the crypto primitives. This ADR provides the optional hub.
 
 ## Threat model
 
