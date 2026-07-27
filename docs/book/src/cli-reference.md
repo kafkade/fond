@@ -68,6 +68,31 @@ fond doctor
 fond doctor --format json
 ```
 
+### `fond backup`
+
+Create, restore, and verify a portable device backup — a single authenticated `FONDBKP1` archive of your `.cook` recipes, photos, and authored-overlay sidecars. The derived `fond.db` is not stored; it is rebuilt by `fond reindex` on restore. Plaintext by default (no key, no network); `--encrypt` seals it with XChaCha20-Poly1305 using the same household key as `fond overlay --encrypt`.
+
+```bash
+# Create (plaintext by default) — writes <data-dir>/backups/fond-backup-<timestamp>.fondbkp
+fond backup create
+fond backup create --dest /mnt/backup/recipes.fondbkp
+
+# Encrypted (keychain key by default; --passphrase derives via Argon2id,
+# reading FOND_OVERLAY_PASSPHRASE or prompting)
+fond backup create --encrypt
+fond backup create --encrypt --passphrase
+
+# Verify — the "prove restore works" drill; writes nothing, fails closed on tamper
+fond backup verify recipes.fondbkp
+fond backup verify recipes.fondbkp --against-source   # also diff against live data
+
+# Restore — verifies first, fails closed on tamper, then reindexes
+fond backup restore recipes.fondbkp
+fond backup restore recipes.fondbkp --dry-run          # report only, writes nothing
+```
+
+To run backups unattended on cron / launchd / Windows Task Scheduler, see [Scheduling Backups](./scheduled-backups.md).
+
 ### `fond import paprika <path>`
 
 Import recipes from a Paprika archive (`.paprikarecipes` or `.paprikarecipe`).
