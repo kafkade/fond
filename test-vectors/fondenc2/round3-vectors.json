@@ -1,0 +1,115 @@
+{
+  "format": "fond-a05-round3-vectors-v1",
+  "status": "ILLUSTRATIVE-NON-NORMATIVE",
+  "honesty": "These vectors cover only byte-defined serialization or primitive behavior. They do not resolve the vk_grant roster-hash cycle, define missing canonical transcripts, or validate the FONDENC2 composition.",
+  "reviewed_spec_sources_sha256": {
+    "020-zero-knowledge-identity.md": "32631fd00bc16ef12a8e69ba41de6de71610a78eb8fceacbf399d4ace4e230f0",
+    "021-optional-sync-server.md": "f9d4f61660630c9f58171cb587c700c1e9f5fe623fd5de9c1f7ead2bab9f723c"
+  },
+  "generator_environment": {
+    "python": "3.13.7",
+    "pynacl": "1.6.2",
+    "primitive": "crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt",
+    "reproduction_recipe": [
+      "Hex-decode the listed fields.",
+      "For the stable-package vector, concatenate NS_objectid and identity_seed, then encrypt with the listed KEK, nonce, and opaque test AAD.",
+      "Assert decryption returns the exact 64-byte package.",
+      "For the invitation vector, concatenate the fixed-width fields in the listed order and verify the length and SHA-256."
+    ]
+  },
+  "vectors": [
+    {
+      "id": "stable-member-package-xchacha20poly1305-001",
+      "status": "PRIMITIVE-ONLY",
+      "scope": "Tests the revised 64-byte stable package and selected XChaCha20-Poly1305 primitive. The opaque test AAD deliberately does not invent the undefined canonical len_prefix encoding, so this is not a complete FONDENC2 self-wrap transcript.",
+      "construction": "XChaCha20-Poly1305-IETF",
+      "package_layout": "NS_objectid[32] || identity_seed[32]",
+      "package_length": 64,
+      "kek_hex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+      "nonce_hex": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
+      "ns_objectid_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "identity_seed_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "package_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "package_sha256": "ae02e99bbdd3713ac87427589a48fc45818ef9a7ecd27941142d8f6f61afb7c1",
+      "opaque_test_aad_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "ciphertext_hex": "49b894d3c654842c316fe38239572151825801e406b66a7805df5ef319318dabf6fa231fffdf3cf1afb50202e51520f1566b938a0e4b3646154e95d7ddf9a644",
+      "tag_hex": "089bde508f47255679c75dddda8de71c",
+      "sealed_hex": "49b894d3c654842c316fe38239572151825801e406b66a7805df5ef319318dabf6fa231fffdf3cf1afb50202e51520f1566b938a0e4b3646154e95d7ddf9a644089bde508f47255679c75dddda8de71c",
+      "sealed_sha256": "712b8ac0977cf72e1da919e2800e890abe048e13cef67687be7096fb9d44d931",
+      "assertion": "Decrypting sealed_hex under the fixed KEK, nonce, and opaque test AAD yields package_hex."
+    },
+    {
+      "id": "invitation-plaintext-layout-001",
+      "status": "SERIALIZATION-ONLY",
+      "scope": "Tests only the fixed-width 172-byte invite_pt layout added by the remediation. It does not define invitation HPKE info/AAD, the signed transcript codec, or deterministic HPKE encapsulation.",
+      "layout": "VK_e[32] || NS_objectid[32] || epoch_u32_le || roster_hash[32] || transition_hash[32] || frontier_or_checkpoint_id[32] || head_counter_u64_le",
+      "vault_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "ns_objectid_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "epoch": 16909060,
+      "epoch_u32_le_hex": "04030201",
+      "roster_hash_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "transition_hash_hex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+      "frontier_or_checkpoint_id_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "head_counter": 72623859790382856,
+      "head_counter_u64_le_hex": "0807060504030201",
+      "freshness_anchor_length": 108,
+      "freshness_anchor_hex": "04030201404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f0807060504030201",
+      "freshness_anchor_sha256": "551ddd196a1699519414a2d0fbd4ae41bde50b716b01853befe106779bc308fd",
+      "invite_plaintext_length": 172,
+      "invite_plaintext_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f04030201404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f0807060504030201",
+      "invite_plaintext_sha256": "177dcb79a908ad9076ca6dc2579fc457ed1fcc3a07d26738b3678ba7f6b99281",
+      "assertions": [
+        "freshness_anchor_hex is 108 bytes",
+        "invite_plaintext_hex is 172 bytes",
+        "invite_plaintext_hex is the exact concatenation of the listed fixed-width fields"
+      ]
+    }
+  ],
+  "blocked_vectors": [
+    {
+      "category": "vk-grant-hpke-seal-open",
+      "blocked_by": [
+        "N-33: roster_hash is required inside the grant, while the directory hash includes that grant, creating a fixed-point cycle",
+        "len_prefix has no byte width or endianness",
+        "No deterministic HPKE sender ephemeral secret or KEM seed is supplied",
+        "The unsigned canonical roster and grant-signature bodies are undefined"
+      ]
+    },
+    {
+      "category": "complete-hpke-invitation",
+      "blocked_by": [
+        "Invitation HPKE info and AEAD AAD are not specified",
+        "No deterministic HPKE sender ephemeral secret or KEM seed is supplied",
+        "invite_id, recipient_fingerprint, role, and not_after lack canonical encodings",
+        "frontier_or_checkpoint_id does not define how a multi-head frontier is committed",
+        "No consumed-invite state prevents exact same-recipient replay before not_after"
+      ]
+    },
+    {
+      "category": "canonical-stable-package-wrap",
+      "blocked_by": [
+        "len_prefix has no byte width or endianness",
+        "The KEK HKDF-Extract salt remains undefined",
+        "K.1 lacks the required cross-implementation two-secret Argon2id KAT",
+        "K.13 profile triples remain human-deferred"
+      ]
+    },
+    {
+      "category": "epoch-archive-and-transition",
+      "blocked_by": [
+        "N-21 leaves archive record addressing and archive_ref undefined",
+        "N-22 leaves the immutable prepared-to-committed transition representation undefined",
+        "The grant/directory cycle prevents construction of new_roster_hash"
+      ]
+    },
+    {
+      "category": "opaque-login",
+      "blocked_by": [
+        "K.13 measured Argon2id profiles remain human-deferred",
+        "I.10 exact opaque-ke 4.0.1 and voprf dependency review remains human-deferred",
+        "I.11 exact types, features, and fixed-salt KSF adapter remain human-deferred",
+        "I.16 password normalization and exact adapter-label placement remain incomplete"
+      ]
+    }
+  ]
+}
