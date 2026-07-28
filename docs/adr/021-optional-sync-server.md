@@ -180,8 +180,11 @@ Like [ADR-020's FONDENC2 appendix](020-zero-knowledge-identity.md#appendix-fonde
 [ADR-023's FONDBKP1 appendix](023-backup-and-recovery.md#appendix-fondbkp1-wire-format-adr-0231),
 the authoritative byte-level specification will live as module documentation in the sync engine
 (`fond-store` / `fond-server`) **once implemented**; this appendix records the shape so the ADR is
-self-contained. It **composes reviewed primitives** — Ed25519 signatures, HMAC-SHA-256, hash chains,
-version vectors, tombstones, three-way merge — and hand-rolls nothing.
+self-contained. It **composes standard primitives** — Ed25519 signatures, HMAC-SHA-256, hash chains,
+version vectors, tombstones, three-way merge. The individual primitives are not hand-rolled, but
+their **composition into this authenticated-causal-history protocol is novel**, and its soundness is
+**`[Validation Required]`** (N-31) pending the A0.5 human review — a standard-primitive pedigree is
+not a security proof.
 
 **Gate reminder:** this is a paper spec. **No crypto/sync code lands before the Epic A0 independent
 review (A0.5) clears.** Every `[Validation Required]` tag marks a choice the A0.5 reviewer must sign
@@ -195,20 +198,20 @@ The A0.5 adversarial review ([`docs/reviews/a05-fondenc2-adversarial-review.md`]
 returned a **NO-GO** and identified structural blockers in the history topology. This revision
 applies its recommendations. Coverage for items landing in **this appendix**:
 
-| Finding | Handled in | New status |
+| Finding | Handled in | Status (round-2 grade / A0.5-r2 delta) |
 |---|---|---|
-| N-03 / N-12 / I.3 honest-concurrency topology | [§D DAG, CAS, head pointer](#d-authenticated-history-topology-dag-cas--signed-head) | Resolved (A0.5) |
-| N-04 historical roster binding | [§D](#d-authenticated-history-topology-dag-cas--signed-head), [§E](#e-rollback--fork--equivocation-detection) | Resolved (A0.5) |
-| N-05 own-write anti-rollback | [§E op-log commitment](#e-rollback--fork--equivocation-detection) | Resolved (A0.5) |
-| N-07 bootstrap freshness anchor | [§D checkpoints](#d-authenticated-history-topology-dag-cas--signed-head) | Resolved (A0.5) |
-| N-13 / I.1 object-id collision strength & width | [§B](#b-opaque-keyed-object-identifiers) | Resolved (A0.5): 32-byte typed id |
-| I.2 object-id key rotation-invariance | [§B](#b-opaque-keyed-object-identifiers), [§G](#g-honest-limits--what-this-cannot-do) | Resolved (A0.5): vault-lifetime key |
-| I.4 device_id & per-device keys | [§C](#c-per-device-version-vectors) | Decided per review: per-device signing keys |
-| I.5 manifest hash function | [§D](#d-authenticated-history-topology-dag-cas--signed-head) | Decided per review: SHA-256 canonical |
-| I.6 checkpoint cadence/authority | [§D](#d-authenticated-history-topology-dag-cas--signed-head) | Decided per review |
-| I.7 trusted-state home | [§E](#e-rollback--fork--equivocation-detection) | Decided per review: MAC'd file + re-trust |
-| I.8 equivocation response | [§E](#e-rollback--fork--equivocation-detection) | Decided per review: hard-stop + quarantine |
-| I.9 tombstone reaping | [§F](#f-tombstones--sibling-retaining-merge) | Decided per review: signed dominance |
+| N-03 / N-12 / I.3 honest-concurrency topology | [§D DAG, CAS, head pointer](#d-authenticated-history-topology-dag-cas--signed-head) | Partially (round-2): topology fixed; canonical record bytes / CAS-vs-frontier / durable counter open |
+| N-04 historical roster binding | [§D](#d-authenticated-history-topology-dag-cas--signed-head), [§E](#e-rollback--fork--equivocation-detection) | Partially (round-2): historical intent correct; roster/cert/transition bytes + authz state machine open |
+| N-05 own-write anti-rollback | [§E op-log commitment](#e-rollback--fork--equivocation-detection) | Partially (round-2): op-log recognized; record/blob binding + crash order open |
+| N-07 bootstrap freshness anchor | [§D checkpoints](#d-authenticated-history-topology-dag-cas--signed-head) | **Resolved (A0.5-r2)**: same-member + new-member (invitation anchor) both covered |
+| N-13 / I.1 object-id collision strength & width | [§B](#b-opaque-keyed-object-identifiers) | Resolved (width); canonical `len_prefix`/class taxonomy `[Validation Required]` |
+| I.2 object-id key rotation-invariance | [§B](#b-opaque-keyed-object-identifiers), [§G](#g-honest-limits--what-this-cannot-do) | **Resolved (A0.5-r2)**: vault-lifetime key **+ new-member `NS_objectid` delivery** (ADR-020 §H) |
+| I.4 device_id & per-device keys | [§C](#c-per-device-version-vectors) | Partially (round-2): key ownership correct; certificate/enrollment transition open |
+| I.5 manifest hash function | [§D](#d-authenticated-history-topology-dag-cas--signed-head) | Not-resolved (round-2): canonical full-record serialization absent |
+| I.6 checkpoint cadence/authority | [§D](#d-authenticated-history-topology-dag-cas--signed-head) | **Resolved (A0.5-r2)**: new-member checkpoint anchor now in the invitation |
+| I.7 trusted-state home | [§E](#e-rollback--fork--equivocation-detection) | Resolved: MAC'd file + re-trust |
+| I.8 equivocation response | [§E](#e-rollback--fork--equivocation-detection) | Resolved: hard-stop + quarantine |
+| I.9 tombstone reaping | [§F](#f-tombstones--sibling-retaining-merge) | Partially (round-2): predicate decided; N-24 checkpoint/tombstone representation open |
 
 > **New-since-A0.5 design choices** (the DAG topology, signed frontier/head-counter, and the
 > per-device op-log below are among them) are consolidated for the re-reviewer in ADR-020's
@@ -409,12 +412,17 @@ withholding/partition remains possible and is stated honestly in §E/§G.)
   accepted only from an **owner/admin** device (authority) **plus** corroboration that it descends
   from state the accepting device already trusts. A checkpoint lets a new device bootstrap without
   replaying the whole DAG, bounds verification depth, and enables **tombstone reaping** (§F).
-- **Bootstrap freshness anchor (N-07).** A **new device must not accept any checkpoint as genesis on
-  the server's word** — the server could replay an old self-consistent checkpoint. The device's
-  trusted starting head/checkpoint commitment is carried by an **authenticated channel**: the
-  enrolling device's signed head advertisement or a roster transition
-  ([ADR-020 §H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation)),
-  never the bare server response. This closes the first-sync rollback window.
+- **Bootstrap freshness anchor (N-07; new-member case completed A0.5-r2, N-18/N-32).** A **new device
+  must not accept any checkpoint as genesis on the server's word** — the server could replay an old
+  self-consistent checkpoint. The device's trusted starting head/checkpoint commitment is carried by
+  an **authenticated channel**, never the bare server response:
+  - **Same-member enrollment** uses the enrolling device's signed head advertisement or a roster
+    transition ([ADR-020 §H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation)).
+  - **New-member bootstrap** uses the **HPKE-sealed, admin-signed invitation** (ADR-020 §H), which now
+    carries the exact `(epoch, roster_hash, transition_hash, frontier/checkpoint id, head_counter)`
+    plus the HPKE ciphertext digest and an expiry (N-18) — so a new member with no prior watermark
+    still bootstraps from an authenticated anchor, not a server-supplied checkpoint. This closes the
+    first-sync rollback window for **both** cases.
 - **Dovetails the roster chain.** This is the manifest analogue of ADR-020 §G's `prev_roster_hash`
   roster directory chain and the §H transition object; together they make membership *and* content
   history rollback-evident.
@@ -615,34 +623,35 @@ rename). Until A4 lands this appendix is unimplementable, consistent with the A0
 
 ### I. Open questions for A0.5 (independent review)
 
-The A0.5 review adjudicated each item. This revision applies its recommendations: items are
-**Resolved** (structural fix landed) or **Decided per review** (one option pinned), except the
-OPAQUE crate-audit items, which **remain deferred** to a human reviewer. Section pointers are to the
-(revised) sections.
+The A0.5 review adjudicated each item; the round-2 re-review re-graded them. This table reflects the
+**honest round-2 grade**, with A0.5-r2 deltas marked. Section pointers are to the (revised) sections.
 
-| # | Item | New status | Where |
+| # | Item | Status (round-2 grade / A0.5-r2 delta) | Where |
 |---|---|---|---|
-| I.1 | `object_id` input & width | Decided: 32-byte typed length-prefixed transcript | §B |
-| I.2 | Object-id key rotation-invariance | Resolved: random vault-lifetime `NS_objectid`; metadata capability accepted | §B, §G |
-| I.3 | Manifest / VV granularity | Resolved: authenticated multi-parent DAG | §C, §D |
-| I.4 | `device_id` & per-device keys | Decided: random `device_id` + certified per-device signing keys | §C |
-| I.5 | Manifest hash function | Decided: SHA-256, canonical full-record, whole-envelope `blob_hash` | §D |
-| I.6 | Checkpoint cadence & authority | Decided: owner/admin, all-parent-heads, corroborated | §D |
-| I.7 | Trusted-state home | Decided: MAC'd file outside `fond.db` + re-trust flow | §E |
-| I.8 | Equivocation response | Decided: hard-stop + quarantine | §E |
-| I.9 | Tombstone reap predicate | Decided: signed dominance by every current-roster device | §F |
-| I.10 | OPAQUE crate & version pin | **Still deferred (human audit review)** | [ADR-021.2 §C](#c-rust-crate-evaluation--selection) |
-| I.11 | OPAQUE ciphersuite & KSF binding | Decided (suite); crate features/adapter **deferred** | [ADR-021.2 §F](#f-chosen-ciphersuite-parameters--a05-sign-off) |
-| I.12 | Identity ↔ OPAQUE binding | Resolved: client-anchored self-signed sidecar | [ADR-021.2 §E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
-| I.13 | Non-resettable-attribute invariant | Resolved: client-anchored; server enforcement is defense-in-depth | [ADR-021.2 §E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
-| I.14 | Vault-authorization signature format | Resolved: full pinned transcript + replay storage | [ADR-021.2 §D](#d-service-authentication-vs-vault-authorization) |
+| I.1 | `object_id` input & width | Partially: width decided; `len_prefix`/class taxonomy `[Validation Required]` | §B |
+| I.2 | Object-id key rotation-invariance | **Resolved (A0.5-r2)**: vault-lifetime `NS_objectid` **+ new-member delivery** (ADR-020 §H) | §B, §G |
+| I.3 | Manifest / VV granularity | Partially: multi-parent DAG correct; codec/state machine `[Validation Required]` | §C, §D |
+| I.4 | `device_id` & per-device keys | Partially: key ownership correct; certificate/enrollment transition `[Validation Required]` | §C |
+| I.5 | Manifest hash function | Not-resolved: canonical full-record serialization absent | §D |
+| I.6 | Checkpoint cadence & authority | **Resolved (A0.5-r2)**: new-member checkpoint anchor now in the invitation | §D |
+| I.7 | Trusted-state home | Resolved: MAC'd file outside `fond.db` + re-trust flow | §E |
+| I.8 | Equivocation response | Resolved: hard-stop + quarantine | §E |
+| I.9 | Tombstone reap predicate | Partially: predicate decided; N-24 checkpoint/tombstone representation `[Validation Required]` | §F |
+| I.10 | OPAQUE crate & version pin | **Not-resolved / deferred (human audit review)** | [ADR-021.2 §C](#c-rust-crate-evaluation--selection) |
+| I.11 | OPAQUE ciphersuite & KSF binding | Not-resolved: suite pinned; crate features/adapter `[Validation Required]` | [ADR-021.2 §F](#f-chosen-ciphersuite-parameters--a05-sign-off) |
+| I.12 | Identity ↔ OPAQUE binding | Partially: client-anchored; roster link / transcript `[Validation Required]` | [ADR-021.2 §E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
+| I.13 | Non-resettable-attribute invariant | Partially: trust principle corrected; sidecar/roster link + first-registration rule `[Validation Required]` | [ADR-021.2 §E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
+| I.14 | Vault-authorization signature format | Not-resolved: `canonical(...)`, payloads, role matrix, replay durability `[Validation Required]` | [ADR-021.2 §D](#d-service-authentication-vs-vault-authorization) |
 | I.15 | SRP-6a fallback conditions | Resolved: no SRP fallback | [ADR-021.2 §B](#b-why-opaque-rfc-9807-not-srp-6a) |
-| I.16 | Passphrase two-use domain separation | Decided: length-prefixed labels + distinct profile ids | [ADR-021.2 §F](#f-chosen-ciphersuite-parameters--a05-sign-off) |
+| I.16 | Passphrase two-use domain separation | Partially: labels/profile ids decided; OPAQUE normalization / adapter-label placement `[Validation Required]` | [ADR-021.2 §F](#f-chosen-ciphersuite-parameters--a05-sign-off) |
 
-**Still open (deferred to the human cryptographer).** **I.10** (and the crate-features half of
-**I.11**) — pinning the exact `opaque-ke` release/features and confirming the intervening changes
-since the 2021 v0.5.0 audit — cannot be closed by a model review; it stays `[Validation Required]`
-(ADR-021.2 §C, §F). Every other item above is decided or resolved per the review's recommendation.
+**Still open (`[Validation Required]` / deferred).** Beyond **I.10** and the crate-features half of
+**I.11** (the exact `opaque-ke` release/features and the intervening changes since the 2021 v0.5.0
+audit — human-gated), the round-2 re-review keeps **I.1, I.3, I.4, I.5, I.9, I.12, I.13, I.14, I.16**
+at *partial* or *not-resolved*: a single canonical byte codec, the manifest/roster/transition/
+authorization transcripts, the durable-state ordering, and the OPAQUE adapter are not yet
+byte-defined. A0.5-r2 closes **I.2** and **I.6** (new-member `NS_objectid` delivery + invitation
+anchor). This does **not** constitute GO.
 
 ## Appendix: account authentication — PAKE selection (ADR-021.2)
 
@@ -659,8 +668,8 @@ member roster and Ed25519 signing keys in
 [§H](020-zero-knowledge-identity.md#h-enrollment-roles-invitation-revocation-epoch-rotation), and the
 signed causal history in the
 [ADR-021.1 appendix](#appendix-authenticated-causal-history-adr-0211) above. It reuses their exact
-vocabulary (MUK, Vault Key, member KEK, epoch, roster, `wrapped_key_package`, Ed25519 roster/manifest
-signatures, X25519, `fond/fondenc2/v2/...` labels) and **never hand-rolls a PAKE**.
+vocabulary (MUK, Vault Key, member KEK, epoch, roster, `wrapped_stable_package`, `vk_grant`, Ed25519
+roster/manifest signatures, X25519, `fond/fondenc2/v2/...` labels) and **never hand-rolls a PAKE**.
 
 **Gate reminder:** this is a paper spec. **No auth/sync code lands before the Epic A0 independent
 review (A0.5) clears.** After the A0.5 remediation, items I.10–I.16 in the ADR-021.1
@@ -674,17 +683,17 @@ validation of the selection.
 
 Coverage for the review items landing in this appendix:
 
-| Finding | Handled in | New status |
+| Finding | Handled in | Status (round-2 grade) |
 |---|---|---|
-| I.15 / VR-020-D.1 / VR-0212-C.0 drop SRP | [§B](#b-why-opaque-rfc-9807-not-srp-6a), [§C](#c-rust-crate-evaluation--selection) | Resolved (A0.5): no fallback |
-| VR-0212-C.1 / C.3 audit-provenance overclaim | [§C](#c-rust-crate-evaluation--selection) | Resolved (A0.5) |
-| VR-0212-F.8 record-dump claim | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Resolved (A0.5): excludes OPRF seed |
-| I.12 / I.13 / N-09 client-anchored identity | [§E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) | Resolved (A0.5) |
-| I.14 vault-authorization transcript | [§D](#d-service-authentication-vs-vault-authorization) | Resolved (A0.5) |
-| VR-0212-F.1–F.6 ciphersuite | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: OPAQUE-3DH ristretto255/SHA-512 |
-| VR-0212-F.5 / F.7 KSF domain & profile ids | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: distinct domain + profile ids |
-| I.16 passphrase two-use separation | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: length-prefixed labels |
-| I.10 / I.11 crate audit & features | [§C](#c-rust-crate-evaluation--selection), [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Still deferred (human audit) |
+| I.15 / VR-020-D.1 / VR-0212-C.0 drop SRP | [§B](#b-why-opaque-rfc-9807-not-srp-6a), [§C](#c-rust-crate-evaluation--selection) | Resolved: no fallback |
+| VR-0212-C.1 / C.3 audit-provenance overclaim | [§C](#c-rust-crate-evaluation--selection) | Resolved (honesty correction); I.10 human-gated |
+| VR-0212-F.8 record-dump claim | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Resolved: excludes OPRF seed |
+| I.12 / I.13 / N-09 client-anchored identity | [§E](#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) | Partially (round-2): trust principle correct; sidecar/roster link + transcript `[Validation Required]` |
+| I.14 vault-authorization transcript | [§D](#d-service-authentication-vs-vault-authorization) | Not-resolved (round-2): `canonical(...)`, payloads, role matrix, replay durability `[Validation Required]` |
+| VR-0212-F.1–F.6 ciphersuite | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Decided: OPAQUE-3DH ristretto255/SHA-512; exact types/lengths I.10/I.11 |
+| VR-0212-F.5 / F.7 KSF domain & profile ids | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | F.7 resolved; **F.5 not-resolved** (fixed-salt adapter unvalidated, outside RFC vectors) |
+| I.16 passphrase two-use separation | [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Partially: labels decided; OPAQUE normalization / adapter-label placement `[Validation Required]` |
+| I.10 / I.11 crate audit & features | [§C](#c-rust-crate-evaluation--selection), [§F](#f-chosen-ciphersuite-parameters--a05-sign-off) | Not-resolved / deferred (human audit) |
 
 ### Scope & pointer map
 
@@ -955,11 +964,13 @@ A0.3 registry shares parameters only, never a derived value.
   [RFC 9807 §10.11](https://www.rfc-editor.org/rfc/rfc9807.html#section-10.11) states. Rate limits do
   **not** constrain a malicious operator; the honest claim is "records-without-seed give no offline
   guessing", not "no offline guessing ever".
-- **(b) Exfiltrated `wrapped_key_package` blobs + OPAQUE records → still no vault decryption.** The
-  **Secret Key is never on the server** (ADR-020 two-secret model), so even holding every wrapped key
-  package and OPAQUE record the attacker cannot derive the **MUK** or unwrap the **Vault Key**; and
-  without an Ed25519 vault key it cannot forge vault authorization (§D). The blast radius of a breach
-  is capped by material the server never possesses.
+- **(b) Exfiltrated `wrapped_stable_package` blobs + `vk_grant`s + OPAQUE records → still no vault
+  decryption.** The **Secret Key is never on the server** (ADR-020 two-secret model), so even holding
+  every wrapped stable package and OPAQUE record the attacker cannot derive the **MUK** or unwrap the
+  stable package; and each `vk_grant` is an HPKE seal to a member's X25519 **identity private key**
+  (recoverable only from that member's KEK-wrapped `identity_seed`), so the server cannot open the
+  Vault Key either. Without an Ed25519 vault key it cannot forge vault authorization (§D). The blast
+  radius of a breach is capped by material the server never possesses.
 - **(c) But metadata still leaks — do not overclaim.** Blob counts, sizes, change timestamps, and
   device ids remain visible to the server, and a revoked member can still enumerate opaque
   `object_id`s (cross-ref [ADR-021.1 §G](#g-honest-limits--what-this-cannot-do) and the ADR-021
@@ -986,7 +997,8 @@ figures remain gating. **No auth/sync code lands until the deferred items clear.
   [§I table](#i-open-questions-for-a05-independent-review).
 - **Not a re-spec of the vault.** This appendix decides the *account-authentication* primitive and the
   auth-vs-authorization boundary only; the key hierarchy, envelope, roster, and causal history remain
-  authoritative in ADR-020 and the ADR-021.1 appendix. The whole stays a **composition of reviewed
-  primitives** (OPAQUE / RFC 9807, VOPRF / RFC 9497, Argon2id, Ed25519, X25519, HPKE) with **nothing
-  hand-rolled** — which is exactly why the A0.5 independent review is mandatory before any
-  implementation.
+  authoritative in ADR-020 and the ADR-021.1 appendix. It composes **standard primitives** (OPAQUE /
+  RFC 9807, VOPRF / RFC 9497, Argon2id, Ed25519, X25519, HPKE); the primitives are not hand-rolled,
+  but the **overall composition — including the fixed-salt Argon2 KSF adapter and the client-anchored
+  identity sidecar — is novel and `[Validation Required]`** (N-31, I.10/I.11), which is exactly why the
+  A0.5 independent human review is mandatory before any implementation.
