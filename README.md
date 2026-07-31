@@ -52,6 +52,10 @@ foundation of a family kitchen.
   edit, and back up with any tool. SQLite is a derived index — delete it and
   `fond reindex` rebuilds everything.
 - **Local-first.** Works fully offline. Network access is only for optional URL imports.
+- **No account by default.** First run creates no account and encrypts nothing — your
+  recipes never leave your machine unless you choose to sync. Optional **end-to-end
+  encrypted sync** (planned) protects data *in transit and on the remote*, not your local
+  plaintext working copy. See [What fond protects](docs/book/src/security.md).
 - **Family-shared.** Designed for a household from day one. Personal notes, ratings,
   and dietary preferences are per-user; recipes are shared.
 - **Cooklang-native.** Recipes use the open [Cooklang](https://cooklang.org/) format.
@@ -107,6 +111,7 @@ foundation of a family kitchen.
 
 - [Product Roadmap](ROADMAP.md) — 9-phase plan from first recipe to moonshots
 - [Architecture Decision Records](docs/adr/) — 11 ADRs covering load-bearing decisions
+- [What fond protects](docs/book/src/security.md) — what's encrypted, what isn't, and recovery honesty
 - [Native Apple apps](apple/) — building the SwiftUI app over the UniFFI bridge
 - [Contributing Guide](CONTRIBUTING.md) — development setup and contribution guidelines
 

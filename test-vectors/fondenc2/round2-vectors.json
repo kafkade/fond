@@ -1,0 +1,134 @@
+{
+  "format": "fond-a05-round2-vectors-v1",
+  "status": "ILLUSTRATIVE-NON-NORMATIVE",
+  "honesty": "These outputs test only byte-defined primitive behavior. They do not define missing canonical transcripts or constitute a reviewed FONDENC2 ciphersuite.",
+  "reviewed_spec_sources_sha256": {
+    "020-zero-knowledge-identity.md": "dfb424c015a3ef0d552735f13417f6c21a627f62de20481f715eacc7f92a037c",
+    "021-optional-sync-server.md": "58c61e64508b8959f3734fdbbd725990f55c81fd8df12696e5fec4a7f4eb3354"
+  },
+  "generator_environment": {
+    "primary": "Rust chacha20poly1305 0.11.0",
+    "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "1.96.0 (30a34c682 2026-05-25)",
+    "primary_generator_source_sha256": "affc7800516e15195b31f7975b17f81217097527dc95da3347ecd92bc6e99b7a",
+    "cross_check": "Python 3.13.7, PyNaCl 1.6.2, crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt",
+    "cross_check_underlying_libsodium": "[Validation Required] The installed PyNaCl binding does not expose sodium_version_string.",
+    "reproduction_recipe": [
+      "Hex-decode each vector's key, nonce, AAD, and plaintext/package fields.",
+      "Invoke XChaCha20-Poly1305-IETF encryption with the listed AAD.",
+      "Assert the returned ciphertext-plus-16-byte-tag equals sealed_body_hex or sealed_hex.",
+      "Decrypt the sealed bytes with the same key, nonce, and AAD and compare the exact plaintext bytes."
+    ],
+    "agreement": "The Rust and PyNaCl invocations produced identical sealed bytes; underlying PyNaCl libsodium version remains [Validation Required]."
+  },
+  "vectors": [
+    {
+      "id": "fondenc2-envelope-32byte-id-xchacha20poly1305-001",
+      "status": "COMPUTABLE-FROM-REVISED-WIRE-FORMAT",
+      "scope": "Wire-format and AEAD vector using a fixed direct DEK. It does not validate the still-blocked HKDF transcript.",
+      "construction": "XChaCha20-Poly1305-IETF",
+      "header_layout": "magic[8] || version_u8 || object_class_u8 || epoch_u32_le || object_id[32] || nonce[24]",
+      "header_length": 70,
+      "magic_hex": "464f4e44454e4332",
+      "version": 2,
+      "object_class": 0,
+      "epoch": 16909060,
+      "epoch_u32_le_hex": "04030201",
+      "object_id_hex": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+      "dek_hex": "97287892cce0e7190f001e56c63ca74cecbffb29a078f31fee4dcf9315797fa7",
+      "nonce_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",
+      "aad_hex": "464f4e44454e4332020004030201101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",
+      "plaintext_hex": "666f6e6420464f4e44454e433220696c6c75737472617469766520656e76656c6f706520766563746f72007632",
+      "ciphertext_hex": "db7e048c2fd201bf4975ba8654aa19764a10346d83fd468745b6a3cb9fea4a9b0cff3803f121e8dcd2882caf91",
+      "tag_hex": "53bb71a4c39396ce52083889ff739bbc",
+      "sealed_body_hex": "db7e048c2fd201bf4975ba8654aa19764a10346d83fd468745b6a3cb9fea4a9b0cff3803f121e8dcd2882caf9153bb71a4c39396ce52083889ff739bbc",
+      "envelope_hex": "464f4e44454e4332020004030201101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7db7e048c2fd201bf4975ba8654aa19764a10346d83fd468745b6a3cb9fea4a9b0cff3803f121e8dcd2882caf9153bb71a4c39396ce52083889ff739bbc",
+      "assertions": [
+        "aad_hex equals the entire 70-byte cleartext header",
+        "decrypt(sealed_body_hex, aad_hex, nonce_hex, dek_hex) equals plaintext_hex"
+      ]
+    },
+    {
+      "id": "fondenc2-k2-xchacha-keywrap-primitive-001",
+      "status": "PRIMITIVE-ONLY",
+      "scope": "K.2 selects the primitive and 96-byte package shape. The fixed opaque AAD below deliberately does not invent the undefined len_prefix encoding, so this is not a canonical FONDENC2 wrap transcript.",
+      "construction": "XChaCha20-Poly1305-IETF",
+      "package_layout": "current_Vault_Key[32] || NS_objectid[32] || identity_seed[32]",
+      "kek_hex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+      "nonce_hex": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
+      "current_vault_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "ns_objectid_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "identity_seed_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "opaque_test_aad_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "ciphertext_hex": "6998b4f3e674a40c114fc3a219770171a27821c426964a5825ff7ed33911ad8b969a437f9fbf5c91cfd5626285754091360bf3ea6e2b5626752ef5b7bd99c6245e0d81746e881e835e37daada3882fcb85b913c6a9fbf474728fda0d80269ddc",
+      "tag_hex": "aff933d12ea6fd71e0d00eed860440a0",
+      "sealed_hex": "6998b4f3e674a40c114fc3a219770171a27821c426964a5825ff7ed33911ad8b969a437f9fbf5c91cfd5626285754091360bf3ea6e2b5626752ef5b7bd99c6245e0d81746e881e835e37daada3882fcb85b913c6a9fbf474728fda0d80269ddcaff933d12ea6fd71e0d00eed860440a0",
+      "assertion": "Decrypting sealed_hex under the fixed KEK, nonce, and opaque test AAD yields the concatenated 96-byte package."
+    }
+  ],
+  "blocked_vectors": [
+    {
+      "category": "muk-kek-and-canonical-keywrap",
+      "blocked_by": [
+        "K.1 requires a cross-implementation two-secret Argon2id KAT but publishes none",
+        "K.4 leaves the KEK HKDF-Extract salt as an underscore",
+        "K.13 profile triples remain human-deferred",
+        "len_prefix has no byte width or endianness",
+        "N-15 makes cross-member epoch rotation mechanically impossible"
+      ]
+    },
+    {
+      "category": "epoch-archive-chain",
+      "blocked_by": [
+        "The subkey formula conflicts with the claim that multi-field info is length-prefixed",
+        "len_prefix has no byte width or endianness",
+        "N-21 leaves archive record addressing and archive_ref undefined",
+        "N-22 leaves prepared-to-committed transition encoding undefined"
+      ]
+    },
+    {
+      "category": "hkdf-transcripts",
+      "blocked_by": [
+        "K.4 leaves the KEK HKDF-Extract salt undefined",
+        "Raw concatenation formulas conflict with the stated length-prefixed rule",
+        "N-20 does not define HKDF-Extract or PRK semantics for identity_seed"
+      ]
+    },
+    {
+      "category": "object-id-hmac",
+      "blocked_by": [
+        "len_prefix has no byte width or endianness",
+        "A4 durable UUID persistence remains a hard implementation dependency"
+      ]
+    },
+    {
+      "category": "hpke-base-invitation",
+      "blocked_by": [
+        "HPKE info, AEAD AAD, plaintext schema, and ciphertext layout are absent",
+        "Deterministic KAT randomness and ephemeral-key control are absent",
+        "The recipient fingerprint and out-of-band comparison encoding are absent",
+        "The signed transcript does not bind an explicit ciphertext digest",
+        "N-18 leaves NS_objectid undistributed",
+        "N-32 leaves the invitation without a roster, epoch, and frontier freshness anchor"
+      ]
+    },
+    {
+      "category": "ed25519-manifest-record",
+      "blocked_by": [
+        "I.5 leaves the canonical full-record serialization undefined",
+        "I.14 leaves canonical authorization field encodings undefined",
+        "Parent, map, entry, and vector ordering and duplicate rules are absent",
+        "Device certificate and roster hashing transcripts remain incomplete"
+      ]
+    },
+    {
+      "category": "opaque-login",
+      "blocked_by": [
+        "K.13 measured Argon2id profiles remain human-deferred",
+        "I.10 exact opaque-ke 4.0.1 dependency review remains human-deferred",
+        "I.11 exact types, features, and fixed-salt KSF adapter remain human-deferred",
+        "I.16 password normalization and exact adapter-label placement remain incomplete"
+      ]
+    }
+  ]
+}

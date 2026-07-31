@@ -11,6 +11,10 @@
 5. **CLI-first** — the CLI is the primary interface and a first-class product.
 6. **Import as a superpower** — importing from Paprika and the web is frictionless and lossless.
 
+> **No account by default.** fond's first run creates no account and encrypts nothing;
+> optional end-to-end encrypted sync (in transit and on the remote, never your local
+> working copy) is a future opt-in. See [What fond protects](./security.md).
+
 ## What Can It Do?
 
 - **Manage recipes** — add, view, search, edit, tag, and delete `.cook` files
