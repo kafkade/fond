@@ -391,7 +391,12 @@ withholding/partition remains possible and is stated honestly in §E/§G.)
   every entry's `version_vector` and `blob_hash` — so a server can neither reposition a record,
   re-parent it, nor **forge, rewind, or reorder causal state** without breaking the tag.
 - **Historical roster binding (N-04).** Each record carries the `roster_hash` **that authorized its
-  signer at signing time** plus the `device_cert`. Verification replays *that* historical roster
+  signer at signing time** plus the `device_cert`. This names the **full completed directory**,
+  including actual grants, certificate signatures, and directory
+  admin signatures, **not** the grant-free `roster_core_hash`
+  ([ADR-020 §G boundaries](020-zero-knowledge-identity.md#grant-free-roster-core-commitment-n-33)).
+  The latter binds only grant HPKE context and never replaces historical authorization. Verification
+  replays *that* full historical roster
   (§E check 1) — so history authored by a **later-revoked** member/device stays valid, and a signer
   who was **not** authorized in that roster is rejected. Checking against the *current* roster alone
   was both too strict (rejects valid old history) and too weak (doesn't prove authorization then).
@@ -473,7 +478,10 @@ On every pull the client runs these checks **before** applying anything, and **f
 
 1. **Signature & historical roster (N-04).** Every record must carry a valid Ed25519 signature from
    the **device key certified in the roster identified by that record's `roster_hash`** — the
-   historical authorization state, not the current roster. Reject a signer not authorized in *that*
+   full historical authorization state, not the current roster or grant-free core. Resolve/authenticate
+   the completed directory under ADR-020 §G, with N-17 canonical signing/hash bytes and the roster
+   state machine still `[Validation Required]`; the N-33-only correction does not close them.
+   Reject a signer not authorized in *that*
    roster, or a `roster_hash` that does not resolve to a validly-signed roster directory chaining
    from trusted state. This blocks a server forging history **and** admits valid history by
    later-revoked members.
@@ -847,7 +855,9 @@ auth_sig = Sign_{ed25519}( canonical(
 
 - **Which key signs.** The member/admin's **per-device** Ed25519 key (K.7), verified against the
   device certificate in the roster identified by `roster_hash` (historical authorization, ADR-021.1
-  N-04) — so a later-revoked signer's *past* authorized ops still verify, and an unauthorized signer
+  N-04). This is the **full completed-directory** commitment from ADR-020 §G, not
+  `roster_core_hash`; the current grant-free target core cannot authorize its own preparation.
+  A later-revoked signer's *past* authorized ops still verify, and an unauthorized signer
   is rejected.
 - **Replay storage & verification obligation.** The server (and every client) persists seen
   `(member_id, device_id, request_nonce)` / `monotonic_counter` and **rejects replays**; the canonical
