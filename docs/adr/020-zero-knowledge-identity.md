@@ -146,8 +146,9 @@ on the Kit.
 
 - New `FONDENC2` key-hierarchy layer replacing the flat-key `crypto.rs` path; new `fond identity`
   command surface; Emergency Kit generator; one-time FONDENC1 migration. Passphrase-change re-wraps
-  one stable package; **member addition** creates only the new member's stable wrap + epoch grant
-  (existing wraps untouched); **revocation** bumps the epoch and issues one **HPKE Vault-Key grant**
+  one stable package; **member addition** creates the new member's stable wrap and re-grants the
+  current VK to all target members under the new roster core (existing stable wraps untouched);
+  **revocation** bumps the epoch and issues one **HPKE Vault-Key grant**
   per remaining member (never re-wrapping their secrets, never the data). The wire format and
   hierarchy are specified in the **Appendix: FONDENC2 protocol**.
 - **Gated on Epic A0:** no crypto/sync code merges before the protocol spec is independently reviewed
@@ -185,19 +186,33 @@ returned a **NO-GO** and enumerated 6 structural blockers, findings N-01..N-14, 
 adjudication. A **round-2 re-review**
 ([`docs/reviews/a05-fondenc2-adversarial-review-round2.md`](../reviews/a05-fondenc2-adversarial-review-round2.md))
 also returned **NO-GO** (24 RESOLVED / 15 PARTIALLY / 16 NOT-RESOLVED) and raised findings
-N-15..N-32. This **A0.5-r2** revision fixes two structural clusters — **N-15** (epoch rotation made
-mechanically possible via per-member HPKE grants) and **N-18/N-32** (invitation freshness +
-completeness) — and honestly re-states every other row at its round-2 grade. **It still does NOT
-claim GO; the spec remains pre-implementation.** Coverage for items landing in **this appendix** (A0.3
-items in the [A0.3 table](#a05-remediation-mapping-a03); ADR-021 items in the ADR-021.1/ADR-021.2
+N-15..N-32. The subsequent immutable
+[round-3 review](../reviews/a05-fondenc2-adversarial-review-round3.md) returned **NO-GO**
+(26 RESOLVED / 15 PARTIALLY / 14 NOT-RESOLVED), identifying **N-33**, the HPKE grant/full-directory
+hash fixed point, and reopening the dependent rotation/recovery claims.
+
+**Post-review human handoff (N-33 only).** This revision separates a byte-defined, grant-free
+`roster_core_hash` from the full completed-directory `roster_hash` (§G). The structural N-33 cycle
+has a **specified correction; pending human validation**. This post-review change has **NOT been
+independently cryptographically reviewed**; it neither changes the historical review/hashes nor
+promotes N-15/N-01/K.2/K.12/K.16 to universally resolved. The round-3
+[primary residual-human checklist](../reviews/a05-fondenc2-adversarial-review-round3.md#primary-deliverable-residual-human-checklist)
+remains the handoff authority, including invitation replay (N-32), the legacy pre-auth bounds
+(N-06 / A1), canonical transcripts, roster state machine, and N-21/N-22. The user-directed
+model-review loop **freezes after this correction**: no further model review is authorized.
+[#120](https://github.com/kafkade/fond/issues/120) remains **OPEN / BLOCKED**, with **NO-GO** for
+implementation until an independent human cryptographer explicitly signs off. Coverage for items
+landing in **this appendix** (A0.3 items in the [A0.3 table](#a05-remediation-mapping-a03);
+ADR-021 items in the ADR-021.1/ADR-021.2
 tables):
 
-| Finding | Handled in | Status (round-2 grade / r2 delta) |
+| Finding | Handled in | Status (affected gates; other rows retain r2 history) |
 |---|---|---|
-| **N-15** epoch rotation mechanically impossible | [§G split package + HPKE grant](#g-per-member-key-wrapping--the-roster), [§H rotation](#h-enrollment-roles-invitation-revocation-epoch-rotation) | **Resolved (A0.5-r2)** |
+| **N-33** grant/directory fixed point | [§G roster-core commitment](#grant-free-roster-core-commitment-n-33) | **Specified correction; pending human validation** (structural cycle only) |
+| **N-15** epoch rotation mechanically impossible | [§G split package + HPKE grant](#g-per-member-key-wrapping--the-roster), [§H rotation](#h-enrollment-roles-invitation-revocation-epoch-rotation) | **Not closed**: N-33-only correction; composition, codec, and state machine `[Validation Required]` |
 | **N-18** invitation freshness anchor | [§H invitation](#h-enrollment-roles-invitation-revocation-epoch-rotation) | **Resolved (A0.5-r2)** |
 | **N-32** invitation delivers `NS_objectid` | [§H invitation](#h-enrollment-roles-invitation-revocation-epoch-rotation) | **Resolved (A0.5-r2)** |
-| N-01 epoch-key archive distribution | [§L epoch-key archive](#l-epoch-key-archive--history-recovery-n-01) | **Resolved (A0.5-r2)** (current VK now reaches members via the grant) |
+| N-01 epoch-key archive distribution | [§L epoch-key archive](#l-epoch-key-archive--history-recovery-n-01) | **Not closed**: grant direction specified; archive addressing/commit and recovery `[Validation Required]` |
 | N-02 roster key cycle | [§G roster split](#g-per-member-key-wrapping--the-roster) | Partially-resolved (round-2): cycle broken; canonical body / state machine open |
 | N-10 identity-key & Kit recovery | [§M identity-key recovery](#m-identity-key-recovery--emergency-kit-n-10-k12) | Resolved (A0.5) |
 | N-08 invitee-key substitution | [§H invitation](#h-enrollment-roles-invitation-revocation-epoch-rotation) | Resolved (substitution); freshness completed A0.5-r2 (N-18) |
@@ -205,7 +220,7 @@ tables):
 | N-13 object-id collision strength | [§E envelope](#e-envelope--wire-format-per-object) | Resolved (width); canonical `len_prefix` `[Validation Required]` |
 | N-28 Kit vs two-secret-loss contradiction | [§M](#m-identity-key-recovery--emergency-kit-n-10-k12) | **Resolved (A0.5-r2)** |
 | K.1 MUK two-secret binding | [§C](#c-domain-separation--the-two-secret-muk) | Decided (direction); two-secret KAT `[Validation Required]` |
-| K.2 wrap construction | [§G](#g-per-member-key-wrapping--the-roster) | **Decided (A0.5-r2): two constructions** (symmetric self-wrap + HPKE grant); canonical AAD/`len_prefix` `[Validation Required]` |
+| K.2 wrap construction | [§G](#g-per-member-key-wrapping--the-roster) | **Partially-resolved**: self-wrap + HPKE grant selected; core/info/AAD bytes scoped here, signing bytes/composition and stable-wrap codec `[Validation Required]` |
 | K.3 invitation transport | [§H](#h-enrollment-roles-invitation-revocation-epoch-rotation) | Decided: HPKE + signed transcript; +`NS_objectid`/anchor (A0.5-r2); canonical bytes `[Validation Required]` |
 | K.4 subkey/DEK KDF | [§B](#b-key-hierarchy), [§F](#f-per-object-dek-derivation--object-granularity) | Decided: HKDF-SHA-256; KEK Extract salt / raw-vs-length-prefixed `[Validation Required]` |
 | K.5 nonce strategy | [§E](#e-envelope--wire-format-per-object) | Resolved: keep random |
@@ -213,15 +228,16 @@ tables):
 | K.7 per-device keys | [§H](#h-enrollment-roles-invitation-revocation-epoch-rotation), [§M](#m-identity-key-recovery--emergency-kit-n-10-k12) | Partially-resolved (round-2): certificate transcript incomplete |
 | K.8 roster signer model | [§G](#g-per-member-key-wrapping--the-roster) | Partially-resolved (round-2): canonical signed body / transition semantics open |
 | K.11 object-id source & width | [§E](#e-envelope--wire-format-per-object), [§F](#f-per-object-dek-derivation--object-granularity) | Partially-resolved (round-2): `len_prefix` / class taxonomy open |
-| K.12 Emergency Kit / recovery | [§M](#m-identity-key-recovery--emergency-kit-n-10-k12) | **Resolved (A0.5-r2)** (recovery via grant; N-28 contradiction fixed) |
+| K.12 Emergency Kit / recovery | [§M](#m-identity-key-recovery--emergency-kit-n-10-k12) | **Not closed**: recovery direction specified; authenticated grant path/full-loss freshness `[Validation Required]`; N-28 loss clarification retained |
 | K.13 Argon2 figures/budget | [A0.3 registry](#argon2id-profile-registry) | Not-resolved / deferred (human + measurement) |
 
 ### New design decisions since A0.5 (not in the original review — scrutinize these)
 
 The mapping table above answers *"where did each review finding go?"*. This block answers the
 second, higher-risk axis: *"what did this revision introduce that the A0.5 review never saw?"* **The
-A0.5 review did not see these; they are the highest-risk part of this revision and should be the
-re-review's focus.** One line each — mechanics live in the linked section.
+A0.5 review did not see these; they are the highest-risk part of this revision for independent
+human scrutiny.** The round-3 artifact records later model scrutiny; item 8 is a post-review
+spec change, not human sign-off. Mechanics live in the linked sections.
 
 1. **Forward-chained epoch-key archive** — `archive[e] = VK_e` sealed under a subkey of `VK_{e+1}`, so
    any current-VK holder walks back to `VK_0`; no separate archive-root key. → [§L](#l-epoch-key-archive--history-recovery-n-01)
@@ -254,6 +270,12 @@ re-review's focus.** One line each — mechanics live in the linked section.
    breaking that wrap or capturing the seed in memory; and an admin gains no new plaintext power (it
    already holds `VK_e`). The trade-off is the price of making N-15 rotation mechanically possible.
    → [§G blast radius](#g-per-member-key-wrapping--the-roster)
+8. **Grant-free target roster core, distinct from the full directory (post-round-3 N-33).** Grants
+   bind a canonical projection of vault/epoch/predecessor/member identities/roles/public keys, never
+   their own outputs. The full directory still commits to actual grants and signatures. Every
+   chained successor changes the predecessor-bound core, including same-epoch updates, and requires
+   re-grants; stable packages are unchanged except for the member's own explicit re-wrap.
+   → [§G core and construction order](#grant-free-roster-core-commitment-n-33).
 
 ### A. Design goals
 
@@ -491,7 +513,8 @@ for the current epoch they walk the archive chain backward (§L).
      an admin's Ed25519 key. Because the admin needs only the member's **public** X25519 key, an admin
      can (re-)grant `VK_{e+1}` to every remaining member on rotation **without** any other member's
      KEK/passphrase/Secret Key — the mechanism round-1 lacked (N-15). Grant-record bytes, HPKE `info`,
-     and AAD are pinned below.
+     and AAD are scoped below; the canonical signing transcript and composition remain
+     `[Validation Required]`.
 
 - **Stable-package wrapping — decided (A0.5, K.2; construction #1 of two): XChaCha20-Poly1305
   keywrap** with a random 24-byte nonce.
@@ -503,10 +526,55 @@ for the current epoch they walk the archive chain backward (§L).
   `len_prefix("fond/fondenc2/v2/wrap") ‖ vault_id ‖ member_id ‖ kdf_profile_id ‖ salt ‖
   member_ed25519`. This prevents a wrap from being replayed into a different member slot or vault.
   **Directory-level integrity** — which members/roles/device-certs/grants exist — is provided by the
-  **admin signature over the whole directory** (below), *not* by the wrap AAD, so adding a member or
-  device, changing a role, or issuing a new epoch grant does **not** invalidate any existing member's
-  stable wrap.
-- **Per-epoch Vault-Key grant — decided (A0.5-r2, K.2; construction #2 of two): HPKE-Base grant.**
+  **admin signature over the unsigned directory body** (below), *not* by the wrap AAD, so adding a
+  member or device, changing a role, or issuing a new epoch grant does **not** invalidate any
+  existing member's stable wrap.
+
+#### Grant-free roster-core commitment (N-33)
+
+The target directory has **two distinct commitments**. `roster_core_hash` is SHA-256 of exactly
+the following **grant-free core preimage**; it binds the target membership needed by HPKE grants.
+It is **not** the directory's content address or a historical authorization substitute.
+
+| Order | Field | Exact encoding |
+|---|---|---|
+| 1 | Domain | ASCII `fond/fondenc2/v2/roster-core` followed by one `00` octet (29 bytes total) |
+| 2 | `vault_id` | 16 raw identifier octets |
+| 3 | `current_epoch` | Target epoch, unsigned `u32` little-endian |
+| 4 | `prev_roster_hash` | 32 raw bytes of the **immediate predecessor's full completed-directory hash**; all zero only at genesis |
+| 5 | Member count | Unsigned `u32` little-endian, number of target member entries |
+| 6 | Each target member | `member_id(16) ‖ role(1) ‖ member_ed25519(32) ‖ member_x25519(32)` (81 bytes) |
+
+For this core only, `role` encodes `owner = 00`, `admin = 01`, `member = 02`; other octets are
+rejected. Identifiers use their raw 16-byte order (UUID textual hex with hyphens removed, **no**
+mixed-endian UUID field conversion). Public keys use their raw 32-byte Ed25519/X25519 encodings,
+not text. Sort entries lexicographically by unsigned `member_id` octets before encoding. Reject
+duplicate member ids (even identical entries), repeated Ed25519 or X25519 member public keys across
+entries, unknown roles, incorrect widths, an empty member set, or a count outside `1..2^32-1`.
+There are no optional fields, padding, implicit defaults, or trailing bytes. The preimage length
+is exactly `85 + 81 * member_count` bytes. Decoding requires this order; sorting the input member
+collection yields the same preimage regardless of its original enumeration order.
+
+**Exact exclusions.** The core contains **only** the six rows above. Excluded are its own
+`roster_core_hash` field; the current full `roster_hash`/`new_roster_hash`; every grant body,
+`hpke_enc`, ciphertext/tag, and signature output; stable-wrap headers/KDF profile/salt/nonce and
+ciphertext/tag; all `devices[]` certificate bodies, public keys, validity fields, and certificate
+signatures; directory/admin signature lists; optional roster-metadata bodies/ciphertexts/addresses;
+invitation/identity-sidecar outputs; archive bodies/addresses; and any dependent transition id,
+manifest id/frontier/head/counter, or completion field. None may be added indirectly as a digest.
+In particular, no target device-certificate or signing output can feed back into the core. The
+**predecessor** full hash may contain predecessor grants/signatures because those are already
+completed, authenticated inputs, not outputs of this target core.
+
+The exclusions do **not** make devices, wraps, or grants unauthenticated: the completed directory
+body and its admin signatures cover them as specified below. Core equality alone is insufficient
+to authorize any directory, role change, device, or manifest. This is a **scoped codec for the new
+core and grant HPKE context only**, not closure of N-17/general canonical signing bytes, public-key
+validation, or the roster state machine.
+
+#### Per-epoch grant bound to the core
+
+- **Per-epoch Vault-Key grant — selected (A0.5-r2, K.2; construction #2 of two): HPKE-Base grant.**
   The grant reuses the invitation suite (**HPKE Base, DHKEM(X25519, HKDF-SHA-256), HKDF-SHA-256,
   ChaCha20-Poly1305**, §H) and is an admin-signed roster-directory field:
 
@@ -515,7 +583,7 @@ for the current epoch they walk the archive chain backward (§L).
   │ vault_id       16 bytes                                                     │
   │ member_id      16 bytes    recipient member                                 │
   │ epoch          u32 LE      e (the epoch of the granted VK_e)                │
-  │ roster_hash    32 bytes    directory hash that authorizes this grant        │
+  │ roster_core_hash 32 bytes  grant-free target core commitment (above)        │
   │ hpke_enc       32 bytes    HPKE encapsulated key (X25519)                    │
   │ hpke_ct        48 bytes    HPKE seal of VK_e(32) + 16-byte Poly1305 tag      │
   ├─ signature ─────────────────────────────────────────────────────────────────┤
@@ -523,14 +591,37 @@ for the current epoch they walk the archive chain backward (§L).
   └─────────────────────────────────────────────────────────────────────────────┘
   ```
 
-  - **Sealing.** `hpke_enc ‖ hpke_ct = HPKE-Seal(pkR = member_x25519, info =
-    len_prefix("fond/fondenc2/v2/vk-grant") ‖ vault_id ‖ member_id ‖ epoch_le ‖ roster_hash,
-    aad = <same info bytes>, pt = VK_e)`. The `info`/AAD bind the grant to one vault, member, epoch,
-    and roster state, so a grant cannot be replayed into a different slot/epoch or lifted onto a
-    forged roster. `member_x25519` is read from the **signed** roster directory (never a bare server
-    value), so the admin seals to an authenticated recipient key.
-  - **Opening.** The member derives `member_x25519` private from `identity_seed` (recovered from the
-    stable package, §M) and HPKE-opens `VK_e`, then walks the archive chain (§L) back to `VK_0`.
+  - **Sealing.** `hpke_enc ‖ hpke_ct = HPKE-Seal(pkR = target_member_x25519, info =
+    grant_context, aad = grant_context, pt = VK_e)`. **Exact 94-byte context:**
+    ASCII `fond/fondenc2/v2/vk-grant` followed by one `00` octet (26 bytes total), then
+    `vault_id(16) ‖ member_id(16) ‖ epoch(u32 LE) ‖ roster_core_hash(32)`, in that order, with no
+    other prefixes or terminators. This replaces `len_prefix` **only for this grant context**.
+    The recipient entry in the core binds its role and both member public keys; `pkR` must be
+    that entry's X25519 key. The grant's six body fields above form a 148-byte payload, in that
+    order; `admin_sig` signs all six fields, **not itself**. Its signing domain/framing remains
+    `[Validation Required]`, so this is not a complete HPKE/signature interoperability vector.
+    Existing members' public keys and the sealing admin's authority come from the **authenticated
+    predecessor**, not a target directory signature that has not yet been produced. A new
+    member's keys require §H's authenticated out-of-band fingerprint; a key change requires
+    predecessor-authorized continuity, not a bare server replacement (state-machine details remain
+    open). The admin constructs the target core from those authenticated inputs; it is not yet a
+    signed directory.
+  - **Opening.** First authenticate the completed directory's admin signature and predecessor
+    authorization chain against prior trusted state, and check the signed transition's
+    authorization/full-directory-hash/epoch linkage where required (genesis exception below).
+    Recompute the core projection/hash and require equality with the directory's stored
+    `roster_core_hash`. Require the grant's `vault_id/member_id/epoch/roster_core_hash` to equal the
+    authenticated target vault, recipient entry,
+    epoch, and recomputed hash; reject missing/duplicate/mis-slotted grants. Derive the recipient
+    keys from the recovered stable package (§M), check their public keys against the target member
+    entry (in particular the X25519 `pkR`), and verify `admin_sig` using an owner/admin key authorized
+    by the predecessor **before HPKE-open**. Open with the exact context above, require a 32-byte
+    candidate `VK_e`. Checks requiring the new key (e.g. decrypting/verifying the transition's
+    manifest head) follow the open; keep the key provisional and do **not** accept/activate the
+    target directory/epoch until all existing transition and anti-rollback rules succeed.
+    Only then use the archive (§L). A matching core or successful decryption alone never accepts
+    state. Whole-state replay still needs trusted watermarks; full-loss recovery freshness remains
+    open (K.12/N-07).
   - **Offline remaining members.** A grant is data in the **signed directory**; an offline member's
     grant simply waits there until they next sync — no online interaction with the admin is needed.
   - **Revoked members.** On the rotation to `e+1` the admin issues **no** grant for the revoked
@@ -556,6 +647,7 @@ for the current epoch they walk the archive chain backward (§L).
      │ vault_id            16 bytes                                                 │
      │ current_epoch       u32 LE                                                   │
      │ prev_roster_hash    32 bytes    hash-chain to the previous directory         │
+     │ roster_core_hash    32 bytes    recomputed grant-free target commitment      │
      │ members[]           list:                                                    │
      │   ├ member_id        16 bytes   pseudonymous id                              │
      │   ├ role             u8         owner / admin / member                       │
@@ -565,21 +657,43 @@ for the current epoch they walk the archive chain backward (§L).
      │   ├ wrapped_stable_package[member]  XChaCha20-Poly1305 self-wrap (K.2 #1)    │
      │   └ vk_grant[member]              HPKE VK_{current_epoch} grant (K.2 #2)     │
      ├─ signatures ────────────────────────────────────────────────────────────────┤
-     │ admin_sigs[]        ≥1 owner/admin Ed25519 signatures over the whole record  │
+     │ admin_sigs[]        ≥1 owner/admin Ed25519 signatures over unsigned body     │
      └────────────────────────────────────────────────────────────────────────────┘
      ```
 
      Each `wrapped_stable_package` is individually AEAD-encrypted under that member's KEK and each
      `vk_grant` is an HPKE seal to that member's identity key, so the directory needs only
-     **authentication** (the admin signatures), never `VK` confidentiality — which is exactly what
-     removes the cycle. The directory sits **outside** the new-key encryption boundary. **Decision
-     (flagged):** this concedes that member **count, roles, and public keys** become server-visible —
-     already within the honest "metadata leaks" limits
+     **authentication** (the admin signatures), never `VK` confidentiality. That removes the
+     **N-02 confidentiality cycle**; the grant-free core separately removes the **N-33 structural
+     hash cycle**, pending human validation. The directory sits **outside** the new-key encryption
+     boundary. **Decision (flagged):** this concedes that member **count, roles, and public keys**
+     become server-visible — already within the honest "metadata leaks" limits
      ([ADR-021.1 §G](021-optional-sync-server.md#g-honest-limits--what-this-cannot-do)); content and
      the Vault Key stay confidential.
   2. **Optional confidential roster metadata.** Any non-essential roster metadata (e.g. member
      display labels) MAY be sealed as a separate FONDENC2 object of `object_class = roster-meta`
      under the `roster-meta` subkey (§F). It is not on the unlock path, so it introduces no cycle.
+
+**Full-directory commitment and signature boundaries.** The unsigned directory body comprises
+`vault_id`, `current_epoch`, `prev_roster_hash`, the recomputed `roster_core_hash`, and all complete
+`members[]` entries shown above: ids/roles/member public keys, actual device certificates
+(including their member signatures), stable-wrap headers/nonce/ciphertext/tag, and actual grant
+bodies **including `hpke_enc`, `hpke_ct`, and `admin_sig`**. Any directory extension admitted by the
+eventual codec is covered too, never silently dropped. Directory admin signatures sign this body
+**excluding `admin_sigs[]` itself**. A device certificate signs its existing §G certificate body,
+excluding its own signature; neither that body nor a grant signing body contains the current full
+directory hash or dependent target transition/manifest outputs. Signature outputs never sign
+themselves.
+
+`roster_hash` (and transition `new_roster_hash`) remains SHA-256 of the **canonical completed
+directory**, including that unsigned body **and the actual directory `admin_sigs[]` outputs**.
+It excludes its own external hash/address and dependent target transition/manifest ids, which are
+computed later, not directory fields. Thus changing an actual grant, device certificate, wrap, or
+directory signature changes the full-directory preimage even when the core stays unchanged. The
+full hash, not the core, remains the predecessor-chain and historical manifest authorization
+commitment. The completed-directory codec/hash-domain framing, signature-list encoding/order,
+and directory/grant/certificate signing domains remain **`[Validation Required]` (N-17)**:
+these exact inclusion/exclusion boundaries do not define those existing transcripts or close K.8.
 
 - **Roster signer model — decided (A0.5, K.8): per-admin keys**, each authorized by the historical
   roster, over a single shared vault signing key. A directory is accepted iff it carries ≥1 valid
@@ -592,6 +706,82 @@ for the current epoch they walk the archive chain backward (§L).
   ADR-021's signed manifest; the two together make membership *and* content history
   rollback-evident. Genesis uses `prev_roster_hash = 0…0`.
 
+#### Constructive directory order and same-epoch updates
+
+The dependency order is **authenticated predecessor inputs → target core bytes → core hash →
+HPKE grants → unsigned completed-directory body → directory admin signatures → full directory
+hash → existing transition/manifest commit**. No edge returns from a target output to the core.
+Device certificate signatures use their own certificate bodies, not target directory hashes;
+they and stable wraps can be prepared independently and are authenticated in the completed body.
+
+- **Genesis.** During local vault creation, generate the owner identity keys and `VK_0`; use
+  `current_epoch = 0`, `prev_roster_hash = 0…0`, and the locally trusted owner's member entry.
+  Hash that core first, produce the owner's stable wrap and seal/sign its self-addressed HPKE grant,
+  assemble/sign the completed directory with the owner key, then derive its full hash for the
+  existing genesis manifest/migration commit. There is no predecessor admin: creation trusts the
+  locally generated owner key; a different receiver requires an explicitly authenticated/pinned
+  genesis vault/owner anchor, never self-signature validity on a server-supplied key alone.
+- **Epoch rotation.** Authenticate the predecessor and admin/remaining-member keys, select the
+  target membership (no revoked entries), set `e+1` and the predecessor's full hash, hash the core,
+  then seal/sign one fresh `VK_{e+1}` grant per target member. Assemble/sign/hash the directory and
+  bind its **full** hash and the separately prepared archive reference into the existing
+  transition/manifest commit. The core does not depend on any of those later outputs (A0.3 ordered procedure).
+- **Same-epoch successor.** A membership/role/key/device or stable-wrap directory update also
+  chains to the immediate predecessor's **full** hash. Recompute the target core before grants.
+  If the core changes, **every target member needs a fresh grant**, including otherwise unchanged
+  members; seal the **current `VK_e`**, not a new epoch key and never another member's KEK.
+  Adding a member uses its out-of-band-authenticated keys and its own self-wrap; remaining members
+  need no secrets or online interaction. Member revocation still requires an epoch rotation.
+  A core-identical candidate may reuse an existing grant only with identical
+  vault/member/epoch/recipient bindings and valid predecessor-admin authorization. Changing
+  excluded outputs with the *same* predecessor/core (e.g. while preparing a candidate) does not
+  require re-granting solely for the core. However, **every new chained directory successor
+  changes `prev_roster_hash`**, so even a device-only or passphrase-wrap-only successor requires
+  all target grants to be reissued. A previously accepted grant is not lifted unchanged onto
+  that successor.
+
+Only the member's explicit passphrase/profile/Secret-Key operation re-wraps its stable package;
+the admin's same-epoch grant refresh never changes it or requires another member's KEK. Publishing
+that wrap as a chained directory update requires an authorized admin with `VK_e` for the grant
+refresh. This is not new member-self-service authorization; N-16/N-19 roster update/commit rules
+and same-epoch acceptance durability remain `[Validation Required]`. Readers authenticate and
+validate the completed successor under those rules, with any opened VK remaining provisional
+until acceptance; an uncommitted core is never a freshness or authorization anchor.
+
+#### Deterministic roster-core example
+
+This **serialization/SHA-256 example only** uses synthetic identifier/public-key octets, not
+approved keys, an enrollment transcript, or a full HPKE vector. Inputs: vault bytes `00..0f`,
+epoch `7`, predecessor hash bytes `a0..bf`; owner id `10..1f`, Ed25519 bytes `30..4f`, X25519
+bytes `50..6f`; member id `20..2f`, Ed25519 bytes `70..8f`, X25519 bytes `90..af`. Sorting by
+member id yields owner then member even if supplied in reverse. Concatenate the following
+hex lines (whitespace is not part of the bytes):
+
+```text
+666f6e642f666f6e64656e63322f76322f726f737465722d636f726500
+000102030405060708090a0b0c0d0e0f
+07000000
+a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+02000000
+101112131415161718191a1b1c1d1e1f
+00
+303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f
+505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f
+202122232425262728292a2b2c2d2e2f
+02
+707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f
+909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf
+```
+
+The preimage is **247 bytes**; `roster_core_hash` (SHA-256) is
+`092e098d3ab793e3a35ac62e20aceb0c4ac48a38e690a7c375188a68863e905a`.
+Changing a role, recipient key, epoch, or predecessor changes these core bytes/hash; permuting
+input members does not. With those core inputs fixed, changing grant/ciphertext/signature outputs
+does not change this core,
+but those actual outputs are still covered by the completed directory's authenticated full
+commitment. No full-directory or signature digest is invented while their codecs remain open.
+The example demonstrates **construction order**, not composition security or human sign-off.
+
 ### H. Enrollment, roles, invitation, revocation, epoch rotation
 
 - **Device enrollment (same member, new device).** Transport the Secret Key via Emergency Kit /
@@ -602,7 +792,9 @@ for the current epoch they walk the archive chain backward (§L).
   (§L) yields all historical epoch keys. The new device then **generates a fresh random per-device
   signing key** (`device_sign`, K.7), self-presents it, and the member identity key **certifies** it
   into a new roster directory entry (a device certificate — this *is* a directory update, though not a
-  new *member*). A **freshness anchor** — the current signed manifest head / checkpoint commitment
+  new *member*). Publish it using §G's same-epoch order, refreshing grants of the current VK because
+  the predecessor-bound core changes; authenticate the existing grant before the initial open.
+  A **freshness anchor** — the current signed manifest head / checkpoint commitment
   ([ADR-021.1 §D](021-optional-sync-server.md#d-authenticated-history-topology-dag-cas--signed-head)) — is
   carried in the enrollment payload so the new device does not accept a stale head on first sync
   (N-07).
@@ -656,16 +848,20 @@ for the current epoch they walk the archive chain backward (§L).
   1. An owner/admin generates a **new** Vault Key `VK_{e+1}` and bumps the epoch `e → e+1`.
   2. **Archives the old key:** seals `VK_e` as `archive[e]` under `subkey_{archive,e}` derived from
      `VK_{e+1}` (§L, N-01), so remaining members retain recoverable history through the new key.
-  3. **Re-grants the new Vault Key to each remaining member (N-15):** issues a fresh **HPKE
+  3. **Builds/hashes the grant-free target core first (§G, N-33):** use the authenticated predecessor's
+     full hash, target epoch `e+1`, and remaining members' identities/roles/public keys.
+  4. **Re-grants the new Vault Key to each remaining member (N-15):** issues a fresh **HPKE
      `vk_grant`** of `VK_{e+1}` to each remaining member's **X25519 identity public key** (from the
-     signed directory), using only public keys — no other member's KEK/passphrase/Secret Key is
+     authenticated predecessor), binding the target `roster_core_hash`, using only public keys —
+     no other member's KEK/passphrase/Secret Key is
      needed. **Stable packages are untouched** (they hold no Vault Key). The revoked member gets **no**
      `e+1` grant and no new archive grant; an **offline** remaining member's grant waits in the signed
      directory until they resync (§G).
-  4. Publishes the new signed roster directory at epoch `e+1` (revoked member removed; new `vk_grant`s
-     present) and the transition object binding old/new roster hashes, old/new epochs, and the
-     manifest predecessor-frontier/head — atomically (§L, A0.3).
-  5. All **new** writes derive DEKs from `VK_{e+1}`; **existing** objects stay under `VK_e` and
+  5. Assembles/authenticates the completed directory with those actual grants, derives its **full**
+     `new_roster_hash`, and publishes it with the existing transition binding old/new full hashes,
+     old/new epochs, and the manifest predecessor-frontier/head (§L, A0.3). N-21/N-22 still gate the
+     archive/immutable commit representation; this does not close K.16.
+  6. All **new** writes derive DEKs from `VK_{e+1}`; **existing** objects stay under `VK_e` and
      are **not** re-encrypted (readable via the archive).
 - **Honest revocation limit.** Because existing data is not re-encrypted, a revoked member who
   retained `VK_e` (or the old-epoch ciphertext they already downloaded) can still decrypt
@@ -680,13 +876,15 @@ for the current epoch they walk the archive chain backward (§L).
 - **Passphrase change / Secret Key rotation.** Re-derives MUK → re-derives KEK → re-wraps the
   member's **stable package** (`NS_objectid ‖ identity_seed`, §G) under the new KEK. **One** durable
   wrap; **no** data re-encryption and **no** epoch bump. The stable package holds **no** Vault Key, so
-  no VK is re-wrapped here — the member keeps reaching `VK_{current}` through its unchanged **HPKE
-  `vk_grant`** (§G), and all historical epoch keys through the archive from it (§L). Because
-  `identity_seed` is unchanged, every existing `vk_grant` (sealed to the member's X25519 identity key)
-  **still opens** — a passphrase change needs no re-grant. The member identity keypair is likewise
+  no VK is re-wrapped here — the member keeps reaching `VK_{current}` through its unchanged HPKE
+  recipient key, and all historical epoch keys through the archive from it (§L). Publishing the
+  new stable wrap as a chained directory successor **does** require same-epoch re-grants of the
+  current VK to all target members (§G), solely because the predecessor-bound core changes.
+  Previously accepted historical grants still open with the same identity but cannot be reused
+  under a different core. The member identity keypair is likewise
   **unchanged**: it derives from the stable package's random `identity_seed` (§M), not the MUK, so a
-  passphrase change neither rotates the identity nor invalidates existing device certificates, grants,
-  or the account identity sidecar.
+  passphrase change neither rotates the identity nor invalidates existing device certificates,
+  historically authenticated grants, or the account identity sidecar.
 
 ### I. `FONDENC1` → `FONDENC2` migration (one-time)
 
@@ -696,7 +894,8 @@ for the current epoch they walk the archive chain backward (§L).
   A0.3 migration step 2). (2) Open the single `FONDENC1` bundle with the existing `KeyMaterial`
   (keychain raw key or passphrase) via `open_bundle`. (3) Generate the Vault Key, `NS_objectid`, and
   an epoch-0 roster directory with the owner's self-wrapped stable package plus a self-addressed epoch
-  grant (§G). (4) Split the `OverlayBundle` into per-object plaintext units by the decided granularity
+  grant (core first, completed-directory full hash afterward, §G). (4) Split the `OverlayBundle`
+  into per-object plaintext units by the decided granularity
   (§F). (5) Seal each unit as a `FONDENC2` object under its Vault-Key-derived DEK at epoch 0.
   (6) Retain (default) or best-effort delete the legacy `FONDENC1` blob per user choice.
 - **Idempotent & lossless.** Re-running detects already-migrated state (a `FONDENC2` object
@@ -725,16 +924,17 @@ human review is mandatory before any implementation.
 
 ### K. Open questions — A0.5 remediation status
 
-The A0.5 review adjudicated each item below; the round-2 re-review re-graded them. This table reflects
-the **honest round-2 grade**, with the A0.5-r2 deltas from this revision marked. Items are
+The A0.5 reviews adjudicated each item below. Affected K.2/K.12/K.16 claims are narrowed here in
+light of round 3 and the **N-33-only specified correction, pending human validation**; unaffected
+rows retain their earlier decision wording, not a new grading. Items are
 **Resolved**, **Partially-resolved** (direction pinned, canonical bytes / transitions still owed),
 **Decided (direction)** with a `[Validation Required]` tail, or **deferred**. Section/label pointers
 are to the (revised) sections above.
 
-| # | Item | Status (round-2 grade / A0.5-r2 delta) | Where |
+| # | Item | Status (affected gates; other rows retain earlier wording) | Where |
 |---|---|---|---|
 | K.1 | MUK two-secret binding | Decided (direction: Argon2 `secret` slot, `0x13`); two-secret **KAT `[Validation Required]`** | §C |
-| K.2 | Vault-Key/stable wrap construction | **Decided (A0.5-r2): two constructions** (self-wrap + HPKE grant); canonical AAD/`len_prefix` `[Validation Required]` | §G |
+| K.2 | Vault-Key/stable wrap construction | **Partially-resolved**: self-wrap + HPKE grant selected; scoped core/info/AAD fixed, signing bytes/stable-wrap codec/composition `[Validation Required]` | §G |
 | K.3 | Invitation transport | Decided: HPKE + signed transcript; **+`NS_objectid`/freshness anchor (A0.5-r2)**; canonical bytes `[Validation Required]` | §H |
 | K.4 | Subkey/DEK KDF | Decided (HKDF-SHA-256); KEK Extract salt / raw-vs-length-prefixed `[Validation Required]` | §B, §F |
 | K.5 | Nonce strategy | Resolved: pure-random 192-bit, no counter | §E |
@@ -744,25 +944,28 @@ are to the (revised) sections above.
 | K.9 | Lazy re-encryption | Resolved: optional, best-effort forward hardening only | §H |
 | K.10 | Identity ↔ OPAQUE binding | Partially: client-anchored; roster link / transcript `[Validation Required]` | [ADR-021.2 §E](021-optional-sync-server.md#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10) |
 | K.11 | `object_id` source & width | Partially: 32-byte width decided; `len_prefix` / class taxonomy `[Validation Required]` | §E, §F, [ADR-021.1 §B](021-optional-sync-server.md#b-opaque-keyed-object-identifiers) |
-| K.12 | Emergency Kit / recovery | **Resolved (A0.5-r2): recovery via HPKE grant; N-28 contradiction fixed** | §M |
+| K.12 | Emergency Kit / recovery | **Not closed**: grant-based recovery direction; authenticated state/full-loss freshness `[Validation Required]`; N-28 clarification retained | §M |
 | K.13 | Argon2 figures & budget | **Not-resolved / deferred (human + measured devices)** | [A0.3 registry](#argon2id-profile-registry) |
 | K.14 | Profile deprecation & forced upgrade | Resolved: explicit, transactional, never silent | [A0.3 lifecycle](#argon2id-profile-registry) |
 | K.15 | Legacy-blob disposition | Resolved: retain by default; delete is best-effort | [A0.3 migration](#fondenc1--fondenc2-migration-algorithm) |
-| K.16 | Cross-object rotation atomicity | **Partially (A0.5-r2): transition now constructible (N-15 fixed)**; `archive_ref` derivation / prepared→committed representation `[Validation Required]` (N-21/N-22) | [A0.3 transition object](#key-rotation--revocation-state-machine) |
+| K.16 | Cross-object rotation atomicity | **Not closed**: N-33 structural correction only; `archive_ref` derivation / prepared→committed representation `[Validation Required]` (N-21/N-22) | [A0.3 transition object](#key-rotation--revocation-state-machine) |
 
-**Still open (`[Validation Required]` / deferred).** Beyond **K.13** (deferred to a human cryptographer
-with measured device evidence), the round-2 re-review keeps **K.1, K.4, K.7, K.8, K.10, K.11, K.16**
-at *partial* — the design direction is pinned but the canonical byte codec, certificate/roster/
-transition transcripts, KDF Extract salts, and archive/commit representations are not yet
-byte-defined. This revision (A0.5-r2) closes **K.2** (two wrap constructions), **K.12** (recovery via
-grant), and the coupled **N-15 / N-18 / N-32 / N-01 / N-28** structural blockers, but **does not claim
-GO**: the spec stays pre-implementation pending the human review and normative vectors.
+**Still open (`[Validation Required]` / deferred).** The immutable round-3 ledger keeps **K.1,
+K.4, K.12, K.13, K.16 NOT-RESOLVED** and **K.2, K.3, K.7, K.8, K.10, K.11 PARTIALLY-RESOLVED**.
+This bounded change does not promote those grades or N-15/N-01. The core and grant HPKE context
+now have scoped bytes, but the general codec, signing/certificate/roster/transition transcripts,
+KDF Extract salts, archive/commit representations, and recovery freshness remain open. N-28's
+two-secret-loss clarification remains; the separate invitation replay/freshness gates are not
+changed here. **NO-GO**: only the structural N-33 cycle has a specified correction pending human
+validation; #120 stays OPEN/BLOCKED pending independent human review and normative vectors.
 
 ### L. Epoch-key archive & history recovery (N-01)
 
 Random per-epoch Vault Keys leave old objects encrypted under old keys. Without a recoverable
 archive, a new device or a re-wrapped member would lose all pre-current-epoch data, and a passphrase
-change could not "re-wrap one key". The archive closes this (A0.5 N-01).
+change could not "re-wrap one key". This specifies an archive direction, **not closure of N-01**:
+grant composition/recovery and archive addressing/commit representations remain
+`[Validation Required]` (N-21/N-22).
 
 - **Forward-chained wrap.** Alongside each rotation `e → e+1`, the old key is sealed into an
   **authenticated archive record** under the standard §F subkey derivation, rooted in the **new**
@@ -786,9 +989,11 @@ change could not "re-wrap one key". The archive closes this (A0.5 N-01).
   **current** Vault Key `VK_{current}` from its **HPKE `vk_grant`** (§G, N-15), then walks the chain
   backward. The archive chain itself is unchanged; what round-1 got wrong was *distribution* — it
   assumed each member's package already held the current VK, which made rotation impossible. Now the
-  current VK reaches each member through the admin-issued public-key grant, and the archive turns that
-  single current key into the whole history. A **passphrase / Secret-Key change re-wraps only the
-  stable package** (no VK) and leaves the grant untouched (§H), so history stays reachable.
+  current VK is delivered through the admin-issued public-key grant bound to `roster_core_hash`
+  (§G, verified against an authenticated **full** directory), and the archive turns that single
+  current key into the whole connected history. A **passphrase / Secret-Key change re-wraps only
+  the stable package** (no VK); publishing a chained same-epoch directory refreshes grants using
+  that same current VK (§G/§H), so it does not alter the archive chain.
 - **No separate anchor needed.** Each `archive[e]` is reachable from `VK_{current}` alone, so the
   archive requires no vault-lifetime anchor key (§F) — only the current Vault Key that every remaining
   member receives through its epoch grant.
@@ -820,16 +1025,23 @@ non-recoverable**:
 - **Member identity keys derive from `identity_seed`** (a field of the self-wrapped stable package,
   §G), **not** from the MUK — so a passphrase / Secret-Key / profile change (which re-derives the MUK
   and KEK and re-wraps the stable package) leaves the identity keypair, its device certificates, its
-  epoch grants (§G), and the account identity sidecar
+  historical grant decryption keys, and the account identity sidecar
   ([ADR-021.2 §E](021-optional-sync-server.md#e-binding-vault-identity-keys-to-the-account-client-anchored-resolves-k10))
-  **unchanged**:
+  **unchanged**. Publishing the wrap in a chained directory refreshes current-VK grants under the
+  new core (§G); this does not rotate the member identity:
   - `member_ed25519 = Ed25519_from_seed(HKDF-Expand(identity_seed, "fond/fondenc2/v2/member-ed25519", 32))`;
   - `member_x25519 = X25519_from_scalar(clamp(HKDF-Expand(identity_seed, "fond/fondenc2/v2/member-x25519", 32)))`.
-- **Recoverable from passphrase + Secret Key — via the grant, not a cross-member re-wrap (K.12).** A
-  restored device with passphrase + Secret Key re-derives the MUK → KEK, pulls the (server-held,
-  always-available) signed roster directory, **unwraps its stable package** (recovering `NS_objectid`
-  and `identity_seed` → the identity keypair), then **HPKE-opens its own `vk_grant`** for the current
-  epoch to recover `VK_{current}` and, from it, the archive history (§L). Recovery therefore rides the
+- **Recovery direction — via the grant, not a cross-member re-wrap (K.12, still gated).** A
+  restored device with passphrase + Secret Key re-derives the MUK → KEK and pulls the signed roster
+  directory, provided a server/device/backup supplies it. It authenticates the directory chain
+  against trusted state or an explicit genesis anchor (§G), **unwraps its stable package**
+  (recovering `NS_objectid` and `identity_seed` → the identity keypair), then performs §G's core,
+  recipient-key, grant-field, and admin-signature checks **before HPKE-opening its own `vk_grant`**.
+  The candidate VK stays provisional until the remaining transition/anti-rollback checks succeed,
+  then yields accepted `VK_{current}` and archive history (§L). This is a dependency-order
+  direction, not a closed recovery protocol: full-loss recovery without a surviving trusted
+  roster/head anchor remains `[Validation Required]`
+  (K.12/N-07); a server's self-consistent old directory is not proof of current state. Recovery rides the
   **per-member public-key grant** — no admin ever needs another member's KEK, and the impossible
   round-1 "re-wrap each remaining member's package" flow is gone. No identity private key or Vault Key
   is ever printed or separately backed up.
@@ -874,17 +1086,18 @@ independent reviewer must sign off on; no crypto/sync code lands before the Epic
 
 Coverage for the review items landing in this A0.3 appendix:
 
-| Finding | Handled in | Status (round-2 grade / A0.5-r2 delta) |
+| Finding | Handled in | Status (affected gates; other rows retain r2 history) |
 |---|---|---|
-| K.16 / N-02 transition object | [rotation state machine](#key-rotation--revocation-state-machine) | Partially (A0.5-r2): transition constructible (N-15 fixed); `archive_ref`/commit representation `[Validation Required]` (N-21/N-22) |
-| N-15 epoch re-grant on rotation | [rotation state machine](#key-rotation--revocation-state-machine) step 4 | **Resolved (A0.5-r2): per-member HPKE grant** |
+| K.16 / N-02 transition object | [rotation state machine](#key-rotation--revocation-state-machine) | **Not closed**: core/grant dependency order specified; `archive_ref`/commit representation `[Validation Required]` (N-21/N-22) |
+| N-33 grant/directory fixed point | [§G core](#grant-free-roster-core-commitment-n-33), [rotation state machine](#key-rotation--revocation-state-machine) steps 4–6 | **Specified correction; pending human validation** (structural cycle only) |
+| N-15 epoch re-grant on rotation | [rotation state machine](#key-rotation--revocation-state-machine) step 5 | **Not closed**: public-key grant direction; composition/signing/state machine `[Validation Required]` |
 | N-06 migration pre-auth Argon2 | [migration algorithm](#fondenc1--fondenc2-migration-algorithm) step 2 | Spec correct; **code fix is A1 impl task (#121)**, not spec-resolvable |
 | VR-020-K13.5 / N-11 pre-auth ceiling | [profile registry](#argon2id-profile-registry) | Partially: per-platform ceiling policy decided; actual sets/ceilings `[Validation Required]` |
 | K.14 deprecation & forced upgrade | [profile registry](#argon2id-profile-registry) | Resolved: no silent re-wrap |
 | K.15 legacy-blob disposition | [migration algorithm](#fondenc1--fondenc2-migration-algorithm) step 9 | Resolved: best-effort delete |
 | VR-020-K13.4 salt width | [MUK derivation parameters](#muk-derivation-parameters) | Resolved: 16-byte salt |
 | K.1 MUK two-secret binding | [MUK derivation parameters](#muk-derivation-parameters) | Decided (direction); two-secret KAT `[Validation Required]` |
-| K.2 wrap AAD | [profile registry](#argon2id-profile-registry) wrap entry | **Decided (A0.5-r2): two wrap constructions**; canonical AAD bytes `[Validation Required]` |
+| K.2 wrap AAD | [profile registry](#argon2id-profile-registry) wrap entry | **Partially-resolved**: scoped core/grant HPKE context bytes fixed in §G; stable-wrap/signing bytes and composition `[Validation Required]` |
 | K.13 / VR-020-K13.1-.3 figures | [profile registry](#argon2id-profile-registry) | Not-resolved / deferred (human + measurement) |
 
 ### Scope & pointer map
@@ -983,20 +1196,24 @@ in `crates/fond-store/src/crypto.rs` once implemented, per the FONDENC2 §E conv
 └────────────────────────────────────────────────────────────────────────────┘
 
 ┌─ Per-member epoch Vault-Key grant  vk_grant[member]  (roster field; §G K.2 #2) ────┐
+│ vault_id   16 bytes target vault                                           │
+│ member_id  16 bytes target recipient member                                │
 │ epoch      u32 LE   epoch of the granted VK_e                              │
+│ roster_core_hash 32 bytes grant-free target core (§G, NOT roster_hash)     │
 │ hpke_enc   32 bytes HPKE encapsulated key (X25519)                         │
 │ hpke_ct    48 bytes HPKE seal of VK_e(32) + tag; sealed to member_x25519    │
 │ admin_sig  64 bytes Ed25519 over the grant body (§G)                       │
-│   HPKE info/AAD = len_prefix("fond/fondenc2/v2/vk-grant") ‖ vault_id ‖     │
-│                   member_id ‖ epoch_le ‖ roster_hash             (§G)       │
+│   HPKE info/AAD = grant_context (exact 94 bytes defined in §G)            │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The two wrap **constructions** are now **decided** (FONDENC2 §G / K.2): a **symmetric
 XChaCha20-Poly1305 self-wrap** of the epoch-invariant stable package (only the member can produce it)
-and an **HPKE grant** of the per-epoch Vault Key (an admin can produce it from public keys — the
-N-15 fix). The stable-wrap `nonce` applies to that AEAD; because the stable package holds no Vault
-Key, its AAD no longer binds `epoch`. What A0.3 pins here is that `kdf_profile_id` and `salt` are
+and an **HPKE grant** of the per-epoch Vault Key (an admin can produce it from authenticated public
+keys once the target core is hashed — the N-33-only structural correction). K.2/N-15 composition
+and signing transcripts remain `[Validation Required]`. The stable-wrap `nonce` applies to that
+AEAD; because the stable package holds no Vault Key, its AAD no longer binds `epoch`. What A0.3
+pins here is that `kdf_profile_id` and `salt` are
 **authenticated header fields** inside the exact wrap-AAD above (§G), which binds only
 **per-member-stable** fields — so re-wrapping one member's stable package, adding another
 member/device, or issuing a new epoch grant never invalidates any other member's wrap.
@@ -1045,18 +1262,24 @@ stateDiagram-v2
 ```
 
 - **Ordered rotation procedure (revocation = epoch rotation, no bulk re-encryption).**
-  1. **Precondition:** an owner/admin Ed25519 signing key — roles are cryptographic, not
-     server-enforced (§H).
+  1. **Precondition:** authenticate the predecessor directory/full hash and an owner/admin
+     Ed25519 signing key authorized there; take remaining-member public keys from that trusted
+     predecessor, not the not-yet-signed target (§G). Roles are cryptographic, not server-enforced (§H).
   2. Generate a fresh random 32-byte `VK_{e+1}`; set `epoch = e + 1`.
   3. **Archive the old key (N-01, §L):** seal `VK_e` as `archive[e]` under an `archive` subkey of
      `VK_{e+1}`, so remaining members keep recoverable history through the new key.
-  4. **Re-grant `VK_{e+1}` to each remaining member (N-15):** issue a fresh **HPKE `vk_grant`** sealed
-     to each remaining member's X25519 identity public key (the grant entry above), using only public
-     keys — no other member's KEK is needed. Stable packages are **not** touched (they hold no Vault
-     Key). The revoked member gets no `e+1` grant and no new archive grant.
-  5. Build the `e+1` roster directory (revoked member removed; new `vk_grant`s embedded), chain
-     `prev_roster_hash` to the `e` directory, and **sign** it with the owner/admin key.
-  6. **Commit as one signed transition object** (below). From here, **new** writes derive DEKs from
+  4. **Build/hash the grant-free target core (N-33):** set target epoch `e+1`,
+     `prev_roster_hash` to the predecessor's **full** hash, and target membership with revoked
+     members removed. Canonicalize/hash §G's exact core bytes before any target grant.
+  5. **Re-grant `VK_{e+1}` to each remaining member (N-15):** issue/sign a fresh **HPKE `vk_grant`**
+     sealed to that member's authenticated X25519 key, using §G's `roster_core_hash` context —
+     no other member's KEK or online interaction is needed. Stable packages are **not** touched
+     (they hold no Vault Key). The revoked member gets no `e+1` grant and no new archive grant.
+  6. Assemble the `e+1` roster directory with the computed core hash and actual grants, **sign its
+     unsigned body** with the predecessor-authorized owner/admin key, then derive its **full**
+     `new_roster_hash` including actual grants and directory signatures (§G).
+  7. **Commit as one signed transition object** (below, existing acceptance requirement still gated
+     on N-21/N-22). From here, **new** writes derive DEKs from
      `VK_{e+1}` (§F); existing objects keep their sealing epoch and are **not** re-encrypted (read via
      the archive).
 - **Signed transition object — decided (A0.5, K.16 / N-02).** Separate "publish roster, then write a
@@ -1067,8 +1290,8 @@ stateDiagram-v2
   ```text
   ┌─ transition object (signed by owner/admin Ed25519) ─────────────────────────┐
   │ vault_id            16 bytes                                                 │
-  │ old_roster_hash     32 bytes    directory hash at epoch e                    │
-  │ new_roster_hash     32 bytes    directory hash at epoch e+1                  │
+  │ old_roster_hash     32 bytes    FULL completed-directory hash at epoch e     │
+  │ new_roster_hash     32 bytes    FULL completed-directory hash at epoch e+1   │
   │ old_epoch           u32 LE      e                                            │
   │ new_epoch           u32 LE      e+1                                          │
   │ archive_ref         32 bytes    record_id of archive[e] (§L); 0…0 if barrier │
@@ -1081,17 +1304,21 @@ stateDiagram-v2
   └────────────────────────────────────────────────────────────────────────────┘
   ```
 
-  - **Atomicity.** A reader advances to `e+1` **only** on a fully-signed transition object with
+  - **Atomicity requirement (K.16, not established).** A reader advances to `e+1` **only** on a
+    fully-signed transition object with
     `completion = 1` whose `new_roster_hash` and `manifest_head` both resolve and whose
     `manifest_head` **dominates every id in `pred_frontier[]`** (so no honest concurrent head is
-    dropped, closing the DAG single-head gap). A crash before that leaves the vault observably at `e`
-    (the prepared object is ignored) — no half-rotated state, and the roster↔manifest epoch stays
-    consistent (closes K.16).
+    dropped, the intended DAG single-head-gap correction). Before that acceptance the reader stays
+    at `e` (ignoring prepared state). This describes the required behavior, **not proof of crash
+    atomicity or closure of K.16**: archive addressing and an immutable prepared→committed
+    representation remain `[Validation Required]` (N-21/N-22).
   - **The new epoch grants commit with the roster.** The per-member `vk_grant[member]` records for
-    `e+1` are **fields of the `e+1` roster directory**, so `new_roster_hash` already covers them: a
-    reader accepts the new epoch's grants only when it accepts the committed transition. There is thus
-    **no** separate publish step for grants, and a partial rotation cannot expose `VK_{e+1}` grants
-    without the committing transition (K.16, N-15).
+    `e+1` are **fields of the `e+1` roster directory**, so the **full** `new_roster_hash` covers their
+    actual ciphertexts and signatures. Grants themselves bind only the earlier grant-free
+    `roster_core_hash`, **never `new_roster_hash`**. A reader accepts new-epoch grants only when
+    accepting the committed transition; no independent grant publish constitutes an epoch commit.
+    This is an acceptance rule, not a claim that staged grant ciphertext is inaccessible before
+    commit or that N-21/N-22 are resolved (K.16, N-15).
   - **Causal cut for the old roster.** The transition is a **causal cut**: records authorized by the
     epoch-`e` roster are valid only as **ancestors of `manifest_head`** (i.e. in `pred_frontier`'s
     history). A record citing the old roster/epoch that is **not** an ancestor of the transition is
@@ -1116,10 +1343,12 @@ stateDiagram-v2
 
 - **Passphrase / Secret-Key change (no rotation).** Re-derive MUK (new passphrase and/or Secret
   Key) → re-derive KEK → re-wrap that member's **stable package** (`NS_objectid ‖ identity_seed`, §G).
-  One durable wrap; the Vault Key, epoch, roster membership, archive, epoch grants, and all data are
-  unchanged — the stable package holds no Vault Key, so history stays reachable through the unchanged
-  `vk_grant` and the archive (§L). This is the Decision's "passphrase change re-wraps one key, no data
-  re-encryption."
+  One durable symmetric wrap; the Vault Key, epoch, roster membership, archive, and all data are
+  unchanged. Publishing the wrap in a chained directory successor changes the core's predecessor
+  commitment and requires fresh grants of the **same current VK** to every target member (§G),
+  produced by an authorized admin without touching other stable wraps. The stable package holds no
+  Vault Key; no data re-encryption or other member's KEK is needed. Previously authenticated history
+  still uses its original full directory hash and grants.
 - **Honest forward-only limit.** As §H states plainly, a revoked member who kept `VK_e` (or
   old-epoch ciphertext already downloaded) can still decrypt everything that existed **at revocation
   time**; rotation protects only post-revocation writes. Optional lazy/background re-encryption
@@ -1185,7 +1414,11 @@ flowchart TD
    chosen `kdf_profile_id`) and the owner identity keypair from `identity_seed` (§M); create the
    **epoch-0** roster directory carrying the owner's **self-wrapped stable package**
    (`NS_objectid ‖ identity_seed`, §G) **and** a self-addressed HPKE `vk_grant` of `VK_0` to the
-   owner's own X25519 identity key, signed by the owner Ed25519 key.
+   owner's own X25519 identity key. Follow §G's genesis order: encode/hash the owner-only core with
+   epoch 0 and a zero predecessor; seal/sign its core-bound grant; assemble/sign the directory's
+   unsigned body with the locally trusted owner key; only then derive the full epoch-0
+   `roster_hash` for the existing migration inventory/genesis manifest. Genesis does not trust
+   arbitrary server-supplied owner keys.
 6. **Split.** Partition the decrypted `OverlayBundle` into per-object plaintext units at the decided
    granularity (§F / K.6 — one object per mergeable record). Photos are already per-file.
 7. **Seal.** For each unit, derive its DEK from `VK_0` (§F) and seal it as a `FONDENC2` object (§E)
@@ -1213,16 +1446,18 @@ Invariants:
 
 ### A0.5 remediation status & validation
 
-- **A0.3 items (K.13–K.16), post-remediation (honest round-2 grades).** **K.14** (deprecation
+- **A0.3 items (K.13–K.16), N-33-only post-review correction.** **K.14** (deprecation
   lifecycle — no silent re-wrap) and **K.15** (legacy-blob disposition) are **resolved**; **K.16**
-  (rotation atomicity) is **partially resolved (A0.5-r2)** — the signed transition is now
-  *constructible* because N-15 rotation works, but `archive_ref` derivation and the prepared→committed
-  representation remain `[Validation Required]` (N-21/N-22); **K.13** (Argon2 figures & budget,
+  (rotation atomicity) is **not closed** — the core-before-grant-before-full-hash order corrects
+  the structural N-33 cycle, pending human validation, but `archive_ref` derivation and the
+  prepared→committed representation remain `[Validation Required]` (N-21/N-22);
+  **K.13** (Argon2 figures & budget,
   decomposed into `VR-020-K13.1`–`VR-020-K13.5`) **remains deferred** to a human cryptographer with
   measured device evidence, except `VR-020-K13.4` (16-byte salt, resolved); `VR-020-K13.5`
   (per-platform pre-auth ceiling) is **partially resolved** — the policy is decided but actual
   accepted-sets/ceilings stay `[Validation Required]`. Cross-appendix: **K.1** (Argon2 `secret` slot;
-  KAT still owed), **K.2** (A0.5-r2 two wrap constructions), and **N-06** (spec allowlist correct; the
+  KAT still owed), **K.2** (partially resolved: two constructions, scoped core/context bytes only;
+  signing/stable-wrap codec and composition still gated), and **N-06** (spec allowlist correct; the
   code fix in `open_bundle`/`open_blob` is an A1 implementation task, [#121](https://github.com/kafkade/fond/issues/121)).
   Full status is in the FONDENC2 [§K table](#k-open-questions--a05-remediation-status).
 - **Not a re-spec of the core.** This appendix pins operational parameters and procedures only; the
